@@ -11,7 +11,7 @@ def get_polymarket_market():
 
     # 2. Add a timeout so it fails immediately if blocked again
     response = requests.get(
-        "https://gamma-api.polymarket.com/markets/slug/cbb-vcu-ncar-2026-03-19",
+        "https://gamma-api.polymarket.com/markets/slug/cbb-arz-mich-2026-04-04",
         headers=headers,
         timeout=10
     )
@@ -27,7 +27,7 @@ def get_polymarket_market():
     print(f"No token: {no}")
 
     client = ClobClient("https://clob.polymarket.com", chain_id=137)
-    book = client.get_order_book(yes)
+    book = client.get_order_book(no)
     print("Best bid:", book.bids[-1])
     print("Best ask:", book.asks[-1])
     print("Tick size:", book.tick_size)

@@ -2,14 +2,14 @@ from collections import defaultdict
 import orderbook as book
 import pandas as pd
 
-class MarketsHolder:
+class MarketHolder:
     _instance = None
     _initialized = False
 
 
     def __new__(self, *args, **kwargs):
         if self._instance is None:
-            self._instance = super(MarketsHolder, self).__new__(self)
+            self._instance = super(MarketHolder, self).__new__(self)
         return self._instance
 
     def __init__(self):
@@ -19,7 +19,7 @@ class MarketsHolder:
         self.poly_orderbooks = {}
         self.k_to_p_map = defaultdict(list)
         self.p_to_k_map = defaultdict(list)
-        df = pd.read_csv('matchedtable.csv')
+        df = pd.read_csv('data/matchedtable.csv')
         print(df)
         for index, row in df.iterrows():
             poly_id = row['poly_id']
@@ -34,9 +34,3 @@ class MarketsHolder:
             self.p_to_k_map[poly_id].append(kalshi_id)
         self._initialized = True
 
-
-if __name__ == '__main__':
-    # Both of these will point to the exact same object in memory
-    market1 = MarketsHolder()
-    market2 = MarketsHolder()
-    print(market1 is market2)

@@ -22,14 +22,14 @@ class Orderbook:
                     prices.pop(index)
 
 
-    def process_bid(self, order, price, volume):
+    def process_bid(self, price, volume):
         """
         Adds a bid to the particular orderbook.
         """
         self._update_book(self.bidPrices, self.bidVolumes, price, volume)
 
 
-    def process_ask(self, order, price, volume):
+    def process_ask(self, price, volume):
         self._update_book(self.askPrices, self.askVolumes, price, volume)
 
     def best_bid(self):

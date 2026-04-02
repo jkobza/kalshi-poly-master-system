@@ -2,6 +2,7 @@ import websockets
 import asyncio
 import json
 
+
 async def connect_to_polymarket_websocket():
     try:
         uri = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -10,8 +11,8 @@ async def connect_to_polymarket_websocket():
 
             testMessage =  {
                     "assets_ids": [
-                        "84007361241758978489330197202827235700289078898880514910472901778979242019662",
-                        "62722671790005482936206654382262146252373495629515527865660421386850609062191"
+                        "20996999543007691583276658905733278225425842004273126945333981068139574656671",
+                        "44766497521417298224542775684305151578865412839932497569295014747238754685930"
                     ],
                     "type": "market",
                     "custom_feature_enabled": False
@@ -28,6 +29,7 @@ async def connect_to_polymarket_websocket():
         print(f"Could not connect to server. Is the server running at {uri}?")
     except Exception as e:
         print(f"An error occurred: {e}")
+
 
 
 if __name__ == "__main__":

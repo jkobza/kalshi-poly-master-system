@@ -64,12 +64,6 @@ async def listen_kalshi():
                 #print(data)
                 process_kalshi_message(markets, data)
 
-
-
-
-
-
-
     except ConnectionRefusedError:
         print(f"Could not connect to server. Is the server running at {uri}?")
     except Exception as e:

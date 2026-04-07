@@ -8,6 +8,8 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import padding
 from dotenv import load_dotenv
+from kalshi_python_async import Configuration, KalshiClient
+import asyncio
 
 # Configuration
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,14 +25,12 @@ def kalshi_load_private_key(key_path):
     with open(key_path, "rb") as f:
         return serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
 
-PRIVATE_KEY = kalshi_load_private_key(PRIVATE_KEY_PATH)
-
 def kalshi_create_signature(timestamp, method, path):
     """Create the request signature."""
     # Strip query parameters before signing
     path_without_query = path.split('?')[0]
     message = f"{timestamp}{method}{path_without_query}".encode('utf-8')
-    signature = PRIVATE_KEY.sign(
+    signature = kalshi_load_private_key(PRIVATE_KEY_PATH).sign(
         message,
         padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
         hashes.SHA256()
@@ -54,3 +54,24 @@ def get_kalshi_headers(url):
 def send_auth_kalshi_message(url):
     headers = get_kalshi_headers(url)
     return requests.get(url, headers=headers)
+
+def get_kalshi_client():
+
+    config = Configuration(
+        host="https://api.elections.kalshi.com/trade-api/v2"
+    )
+
+    # For authenticated requests
+    # Read private key from file
+    with open(PRIVATE_KEY_PATH, "r") as f:
+        config.private_key_pem = f.read()
+
+
+    config.api_key_id = os.getenv('KALSHI_API_KEY')
+
+
+    # Initialize the client
+    client = KalshiClient(config)
+
+    return client
+

@@ -22,8 +22,8 @@ class MarketHolder:
         df = pd.read_csv('data/matchedtable.csv')
         print(df)
         for index, row in df.iterrows():
-            poly_id = row['poly_id']
-            kalshi_id = row['kalshi_id']
+            poly_id = str(row['poly_id']).strip()
+            kalshi_id = str(row['kalshi_id']).strip()
             if kalshi_id not in self.kalshi_orderbooks:
                 self.kalshi_orderbooks[kalshi_id] = book.Orderbook()
 

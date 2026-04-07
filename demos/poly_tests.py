@@ -11,20 +11,22 @@ def get_polymarket_market():
 
     # 2. Add a timeout so it fails immediately if blocked again
     response = requests.get(
-        "https://gamma-api.polymarket.com/markets/slug/cbb-arz-mich-2026-04-04",
+        "https://gamma-api.polymarket.com/markets/slug/mlb-atl-laa-2026-04-06",
         headers=headers,
         timeout=10
     )
     market = response.json()
+    print(market)
     print(market["question"])
 
     clob_tokens = json.loads(market["clobTokenIds"])
+    market_outcomes = json.loads(market["outcomes"])
     yes = clob_tokens[0]
 
     # 3. Use the parsed list, not the raw JSON string
     no = clob_tokens[1]
-    print(f"Yes token: {yes}")
-    print(f"No token: {no}")
+    print(f"{market_outcomes[0]} token: {clob_tokens[0]}")
+    print(f"{market_outcomes[1]} token: {clob_tokens[1]}")
 
     client = ClobClient("https://clob.polymarket.com", chain_id=137)
     book = client.get_order_book(no)

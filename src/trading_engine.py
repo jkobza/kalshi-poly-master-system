@@ -9,17 +9,15 @@ Currently, do not have any logic for redeeming/selling before event closes. Just
 import asyncio
 import json
 import websockets
-import aiohttp
 import logging
 from market_holder import MarketHolder
-from orderbook import Orderbook
 from position_manager import PositionManager
 from strategy_engine import strategy_engine
 from execution_engine import execution_engine
-from util.generate_kalshi_credentials import get_kalshi_headers, get_kalshi_client
-from util.generate_poly_credentials import get_poly_client
-from polymarket_handler import process_poly_message, get_poly_market_subscription_message
-from kalshi_handler import process_kalshi_message, get_kalshi_market_subscription_message
+from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers, get_kalshi_client
+from src.polymarket_modules.generate_poly_credentials import get_poly_client
+from src.polymarket_modules.polymarket_orderbook_handler import process_poly_orderbook_message, get_poly_market_subscription_message
+from src.kalshi_modules.kalshi_orderbook_handler import process_kalshi_orderbook_message, get_kalshi_market_subscription_message
 
 logging.basicConfig(
     filename='bot_nightly.log',
@@ -49,11 +47,11 @@ async def listen_polymarket(markets, signal_process_queue):
                     # book updates can come as a list or regular dict
                     if isinstance(data, list):
                         for i in data:
-                            asset_id = process_poly_message(markets, i)
+                            asset_id = process_poly_orderbook_message(markets, i)
                             if asset_id:
                                 signal_process_queue.put_nowait({"exchange": "polymarket", "asset_id": asset_id})
                     else:
-                        asset_id = process_poly_message(markets, data)
+                        asset_id = process_poly_orderbook_message(markets, data)
                         if asset_id:
                             signal_process_queue.put_nowait({"exchange": "polymarket", "asset_id": asset_id})
 
@@ -81,7 +79,7 @@ async def listen_kalshi(markets, signal_process_queue):
                 while True:
                     message = await websocket.recv()
                     data = json.loads(message)
-                    asset_id = process_kalshi_message(markets, data)
+                    asset_id = process_kalshi_orderbook_message(markets, data)
                     if asset_id:
                         signal_process_queue.put_nowait({"exchange": "kalshi", "asset_id": asset_id})
 

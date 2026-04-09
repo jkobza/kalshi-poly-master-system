@@ -27,7 +27,7 @@ def get_kalshi_market_subscription_message(markets):
     return subscription_msg
 
 
-def process_kalshi_message(markets, message):
+def process_kalshi_orderbook_message(markets, message):
     if message["type"] == "orderbook_snapshot":
         new_book = Orderbook()
         book_update = message["msg"]

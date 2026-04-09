@@ -1,9 +1,6 @@
-import json
-import websockets
-import asyncio
-from util.generate_kalshi_credentials import get_kalshi_headers
-from orderbook import Orderbook
-from util.generate_kalshi_credentials import send_auth_kalshi_message
+from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers
+from src.classes.orderbook import Orderbook
+
 # WebSocket URL
 ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 

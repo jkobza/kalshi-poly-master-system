@@ -1,14 +1,9 @@
 import uuid
 
-from market_holder import MarketHolder
-import os
-from py_clob_client.client import ClobClient
-from dotenv import load_dotenv
-from dataclasses import dataclass, field
-import os
+from src.classes.market_holder import MarketHolder
+from dataclasses import dataclass
 import asyncio
 from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
-from py_clob_client.order_builder.constants import BUY
 from kalshi_python_async.models import CreateOrderRequest
 
 @dataclass
@@ -84,7 +79,7 @@ class PositionManager:
                 status=order.status.lower(),
                 asset_id=order.ticker,
                 side=order.action.lower(),  # "buy" or "sell"
-                price=order.yes_price / 100.0,  # Convert cents back to float dollars!
+                price=order.yes_price_dollars,  # Convert cents back to float dollars!
                 original_size=float(order.count),
                 size_matched=float(size_matched)
             )
@@ -134,7 +129,7 @@ class PositionManager:
             action=action.lower(),
             side="yes",
             count=volume,
-            yes_price=int(price * 100),
+            yes_price_dollars=price,
             client_order_id=str(uuid.uuid4())
         )
 

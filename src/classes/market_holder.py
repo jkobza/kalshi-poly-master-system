@@ -1,5 +1,5 @@
 from collections import defaultdict
-import orderbook as book
+from src.classes import orderbook as book
 import pandas as pd
 
 class MarketHolder:
@@ -19,7 +19,7 @@ class MarketHolder:
         self.poly_orderbooks = {}
         self.k_to_p_map = defaultdict(list)
         self.p_to_k_map = defaultdict(list)
-        df = pd.read_csv('data/matchedtable.csv')
+        df = pd.read_csv('../../data/matchedtable.csv')
         print(df)
         for index, row in df.iterrows():
             poly_id = str(row['poly_id']).strip()

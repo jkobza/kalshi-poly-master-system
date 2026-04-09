@@ -1,9 +1,7 @@
-from market_holder import MarketHolder
-import csv
 import aiofiles
 import logging
 logging.basicConfig(
-    filename='bot_nightly.log',
+    filename='../logs/bot_nightly.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -109,7 +107,7 @@ async def log_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data):
 
     # 2. Asynchronous File Writing
     if best_kalshi_bid > best_poly_ask + (0.07 * best_kalshi_bid * (1 - best_kalshi_bid)):
-        async with aiofiles.open('../results.csv', mode='a', newline='') as csvfile:
+        async with aiofiles.open('../../results.csv', mode='a', newline='') as csvfile:
             row = f"Arb opportunity: Kalshi bid:,{best_kalshi_bid},Poly ask:,{best_poly_ask},Min volume:,{min(best_kalshi_bid_volume, best_poly_ask_volume)}\n"
             await csvfile.write(row)
 
@@ -118,7 +116,7 @@ async def log_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data):
 
 
     if best_poly_bid > best_kalshi_ask + (0.07 * best_kalshi_ask * (1 - best_kalshi_ask)):
-        async with aiofiles.open('../results.csv', mode='a', newline='') as csvfile:
+        async with aiofiles.open('../../results.csv', mode='a', newline='') as csvfile:
             row = f"Arb opportunity: Poly bid:,{best_poly_bid},Kalshi ask:,{best_kalshi_ask},Min volume:,{min(best_kalshi_ask_volume, best_poly_bid_volume)}\n"
             await csvfile.write(row)
 

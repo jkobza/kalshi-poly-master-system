@@ -1,5 +1,6 @@
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers
-from src.classes.orderbook import Orderbook
+from src.state_classes.market_holder import MarketHolder
+from src.state_classes.orderbook import Orderbook
 
 # WebSocket URL
 ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
@@ -8,23 +9,35 @@ ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 auth_headers = get_kalshi_headers(ws_url)
 
 
-def get_kalshi_market_subscription_message(markets):
-    assetIds = []
+def get_kalshi_market_subscription_message(markets: MarketHolder):
+    '''
+    Creates the kalshi websocket subscription message to subscribe to all Kalshi markets
+    held in the marketHolder instance
+    :param markets: The singleton marketHolder instance
+
+    '''
+    asset_ids = []
     for i in markets.kalshi_orderbooks.keys():
-        assetIds.append(str(i))
+        asset_ids.append(str(i))
     #print(assetIds)
     subscription_msg = {
         "id": 2,
         "cmd": "subscribe",
         "params": {
             "channels": ["orderbook_delta"],
-            "market_tickers": assetIds
+            "market_tickers": asset_ids
         }
     }
     return subscription_msg
 
 
 def process_kalshi_orderbook_message(markets, message):
+    '''
+    Processes a kalshi websocket orderbook message and returns the corresponding assetId
+    There are two types of messages, orderbook snapshots and orderbook updates. Each are handled seperately
+    :param markets: The singleton marketHolder instance
+    :param message: The message to process
+    '''
     if message["type"] == "orderbook_snapshot":
         new_book = Orderbook()
         book_update = message["msg"]
@@ -51,6 +64,7 @@ def process_kalshi_orderbook_message(markets, message):
             prev_best_ask = book.best_ask()
 
             price = float(book_update['price_dollars'])
+
             # delta_fp is the relative CHANGE in volume
             delta = float(book_update['delta_fp'])
             side = book_update["side"]
@@ -61,15 +75,5 @@ def process_kalshi_orderbook_message(markets, message):
                 ask_price = round(1.0 - price, 4)
                 current_vol = book.askVolumes.get(ask_price, 0.0)
                 book.process_ask(ask_price, current_vol + delta)
-            #print(f"[KALSHI] {asset_id} | Best Bid: {book.best_bid()} | Best Ask: {book.best_ask()}")
-
-            new_best_bid = book.best_bid()
-            new_best_ask = book.best_ask()
-
-            # 3. Compare and print
-            #if prev_best_bid != new_best_bid:
-             #   print(f"[KALSHI] New Best Bid | {asset_id} | {new_best_bid}")
-            #if prev_best_ask != new_best_ask:
-             #   print(f"[KALSHI] New Best Ask | {asset_id} | {new_best_ask}")
 
             return asset_id

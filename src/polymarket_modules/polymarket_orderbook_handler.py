@@ -1,4 +1,4 @@
-from src.classes.orderbook import Orderbook
+from src.state_classes.orderbook import Orderbook
 
 def process_poly_orderbook_message(market, data):
     # book event type means a trade was executed or it's the initial snapshot

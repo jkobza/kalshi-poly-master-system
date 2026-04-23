@@ -8,8 +8,8 @@ Currently, do not have any logic for redeeming/selling before event closes. Just
 '''
 import asyncio
 import logging
-from src.classes.market_holder import MarketHolder
-from src.classes.position_manager import PositionManager
+from src.state_classes.market_holder import MarketHolder
+from src.state_classes.position_manager import PositionManager
 from strategy_engine import strategy_engine
 from execution_engine import execution_engine
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_client
@@ -30,17 +30,18 @@ async def main():
         markets = MarketHolder()
         poly_client = get_poly_client()
         kalshi_client = get_kalshi_client()
-        positions = PositionManager(markets, poly_client, kalshi_client)
+        positions = PositionManager(markets)
 
-        signal_process_queue = asyncio.Queue()
+        orderbook_update_process_queue = asyncio.Queue()
         order_process_queue = asyncio.Queue()
 
         await asyncio.gather(
-            listen_polymarket_markets(markets,signal_process_queue),
-            listen_kalshi_markets(markets, signal_process_queue),
-            strategy_engine(signal_process_queue, order_process_queue, markets),
+            listen_polymarket_markets(markets,orderbook_update_process_queue),
+            listen_kalshi_markets(markets, orderbook_update_process_queue),
+            strategy_engine(orderbook_update_process_queue, order_process_queue, markets),
             execution_engine(order_process_queue, markets, positions)
         )
+
 
 if __name__ == "__main__":
     try:

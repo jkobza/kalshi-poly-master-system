@@ -4,6 +4,9 @@ from py_clob_client.client import ClobClient
 
 
 def get_polymarket_market():
+    """
+    Fetch a sample Polymarket Gamma market, print token IDs, and inspect one CLOB orderbook.
+    """
     # 1. Add headers to bypass the block
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -11,7 +14,7 @@ def get_polymarket_market():
 
     # 2. Add a timeout so it fails immediately if blocked again
     response = requests.get(
-        "https://gamma-api.polymarket.com/markets/slug/mlb-atl-laa-2026-04-06",
+        "https://gamma-api.polymarket.com/markets/slug/mlb-nyy-bos-2026-06-27",
         headers=headers,
         timeout=10
     )
@@ -24,7 +27,7 @@ def get_polymarket_market():
     yes = clob_tokens[0]
 
     # 3. Use the parsed list, not the raw JSON string
-    no = clob_tokens[1]
+    no = clob_tokens[0]
     print(f"{market_outcomes[0]} token: {clob_tokens[0]}")
     print(f"{market_outcomes[1]} token: {clob_tokens[1]}")
 

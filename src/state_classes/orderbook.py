@@ -1,33 +1,38 @@
 import bisect
 
+VOLUME_EPSILON = 1e-9
+
 class Orderbook:
     '''
     This class holds the internal representation of a single Orderbook for a Kalshi or Polymarket asset.
-    It contains a list of bidPrices and askPrices which are stored in ascending order. It then contains dictionaries mapping a
+    It contains a list of bid_prices and ask_prices which are stored in ascending order. It then contains dictionaries mapping a
     bidprice and askprice to their respective volume in the book.
     '''
     def __init__(self):
-            self.bidPrices =  []
-            self.bidVolumes =  {}
-            self.askPrices = []
-            self.askVolumes = {}
+            """
+            Initialize empty sorted price lists and price-to-volume maps for both sides of the book.
+            """
+            self.bid_prices =  []
+            self.bid_volumes =  {}
+            self.ask_prices = []
+            self.ask_volumes = {}
 
     def _update_book(self, prices, volumes, price, volume):
         '''
-        This helper method takes in a bid/askPrices list and a bid/askVolumes dictionary and updates the order book
-        at that price and volume. It will put prices in ascending order in the list.
+        Update one side of the book at a price level, preserving ascending price order and removing empty levels.
         NOTE that volume is not a delta but instead overwrites the current volume value.
-        :param prices: a bid/askPrices list
-        :param volumes: a bid/askVolumes dictionary
+        :param prices: a bid/ask_prices list
+        :param volumes: a bid/ask_volumes dictionary
         :param price: the price of the bid/ask to be updated
         :param volume: the volume of the bid/ask to replace previous volume (if it exists)
         '''
-        if volume > 0:
+
+        if volume > VOLUME_EPSILON:
             if price not in volumes:
                 bisect.insort(prices, price)
             volumes[price] = volume
 
-        else: #volume is 0 or neg
+        else: #volume is zero, negative, or floating-point dust
             if price in volumes:
                 del volumes[price]
                 # log n search and delete
@@ -38,40 +43,35 @@ class Orderbook:
 
     def process_bid(self, price, volume):
         '''
-        This helper method takes in a bid price and volume and calls the _update_book function with the bidPrices list
-        and bidVolumes dictionary.
+        Update the total displayed bid volume at a price level.
         :param price: The bid price
         :param volume: The current total volume at the bid price - this overwrites the current volume value.
-        :return:
         '''
-        self._update_book(self.bidPrices, self.bidVolumes, price, volume)
+        self._update_book(self.bid_prices, self.bid_volumes, price, volume)
 
 
     def process_ask(self, price, volume):
         """
-        This helper method takes in a ask price and volume and calls the _update_book function with the askPrices list
-        and askVolumes dictionary.
+        Update the total displayed ask volume at a price level.
         :param price: The ask price
         :param volume: The current total volume at the ask price - this overwrites the current volume value.
-        :return:
         """
-        self._update_book(self.askPrices, self.askVolumes, price, volume)
+        self._update_book(self.ask_prices, self.ask_volumes, price, volume)
 
     def best_bid(self):
         """
         Returns the highest bid and its volume in the book.
         :return: A dictionary containing the highest bid and its volume in the book, with keys "price" and "volume"
         """
-        if not self.bidPrices: return None
-        price = self.bidPrices[-1]
-        return {"price": price, "volume": self.bidVolumes[price]}
+        if not self.bid_prices: return None
+        price = self.bid_prices[-1]
+        return {"price": price, "volume": self.bid_volumes[price]}
 
     def best_ask(self):
         """
-       Returns the highest bid and its volume in the book.
-       :return: A dictionary containing the highest bid and its volume in the book, with keys "price" and "volume"
+        Returns the lowest ask and its volume in the book.
+       :return: A dictionary containing the lowest ask and its volume in the book, with keys "price" and "volume"
        """
-        if not self.askPrices: return None
-        price = self.askPrices[0]
-        return {"price": price, "volume": self.askVolumes[price]}
-
+        if not self.ask_prices: return None
+        price = self.ask_prices[0]
+        return {"price": price, "volume": self.ask_volumes[price]}

@@ -23,7 +23,8 @@ class OrderStatus(Enum):
     """
     OPEN = 1
     FILLED = 2
-    PARTIAL = 3
+    KILLED = 3
+    CLOSED = 4
 
 class OrderSide(Enum):
     """

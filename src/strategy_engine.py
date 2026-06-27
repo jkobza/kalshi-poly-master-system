@@ -1,128 +1,190 @@
 import aiofiles
 import logging
-from src.state_classes.orderbook_update_event import OrderbookUpdateEvent
-from src.util.enums import Exchange
-logging.basicConfig(
-    filename='../logs/bot_nightly.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-async def strategy_engine(orderbook_update_queue, order_process_queue, market_holder):
+import time
+
+from src.kalshi_modules import kalshi_user_handler
+from src.polymarket_modules.polymarket_orderbook_handler import process_poly_orderbook_message
+from src.state_classes.market_holder import MarketHolder
+from src.state_classes.orderbook import Orderbook
+from src.state_classes.events import OrderbookUpdateEvent, ExecutionEvent
+from src.util.enums import Exchange, OrderSide
+from src.state_classes.position import Position
+from src.state_classes.order import Order
+from src.state_classes.position_manager import PositionManager
+
+class StrategyEngine:
+    def __init__(self, market_holder: MarketHolder, position_manager: PositionManager, orderbook_update_process_queue, user_update_process_queue,
+                 execution_queue):
+        """
+        Store shared state, queues, sizing limits, and heartbeat counters used by the strategy loop.
+        """
+        self.market_holder = market_holder
+        self.position_manager = position_manager
+        self.orderbook_update_process_queue = orderbook_update_process_queue
+        self.user_update_process_queue = user_update_process_queue
+        self.execution_queue = execution_queue
+
+        self.MAX_SIZE = 10
+        self.MIN_TRADE_SIZE = 1
+        self.STATS_INTERVAL_SECONDS = 30
+        self.poly_update_count = 0
+        self.kalshi_update_count = 0
+        self.incomplete_book_count = 0
+        self.execution_signal_count = 0
+        self.poly_sell_skip_count = 0
+        self.last_stats_log = time.monotonic()
 
 
-    print("Strategy engine started, waiting for market events...")
-    while True:
-        event = await orderbook_update_queue.get()
+    async def process_orderbook_updates(self):
+        """
+        Consume orderbook update events and run opening logic for matched markets without active or open positions.
+        """
+        while True:
+            update: OrderbookUpdateEvent = await self.orderbook_update_process_queue.get()
+            try:
+                exchange = update.exchange
+                asset_id = update.assetId
+                if exchange == Exchange.KALSHI:
+                    kalshi_asset_id = asset_id
+                    matched_poly_ids = self.market_holder.k_to_p_map.get(kalshi_asset_id)
+                    if not matched_poly_ids:
+                        continue
+                    polymarket_asset_id = matched_poly_ids[0]
+                    self.kalshi_update_count += 1
+                else:
+                    polymarket_asset_id = asset_id
+                    self.poly_update_count += 1
+                    matched_kalshi_ids = self.market_holder.p_to_k_map.get(polymarket_asset_id)
+                    if not matched_kalshi_ids:
+                        continue
+                    kalshi_asset_id = matched_kalshi_ids[0]
 
-        exchange = event.exchange
-        asset_id = event.asset_id
+                pair_is_active = (
+                        kalshi_asset_id in self.position_manager.active_ids
+                        or polymarket_asset_id in self.position_manager.active_ids
+                )
 
-        if exchange == Exchange.POLYMARKET:
-            kalshi_ids = market_holder.p_to_k_map.get(asset_id)
-            if not kalshi_ids:
-                orderbook_update_queue.task_done()
-                continue
+                pair_is_open = (
+                        self.position_manager.has_open_position_for_asset(kalshi_asset_id)
+                        or self.position_manager.has_open_position_for_asset(polymarket_asset_id)
+                )
 
-            # Get the id of the kalshi asset
-            kalshi_eq_asset_id = kalshi_ids[0]
+                if not pair_is_active and not pair_is_open:
+                    # Check opening trade logic
+                    if kalshi_asset_id is not None and polymarket_asset_id is not None:
+                        self.opening_trade_logic(kalshi_asset_id, polymarket_asset_id)
 
-            # Get both current orderbooks
+                    # Check closing trade logic
+                    # TODO
+            except Exception:
+                logging.exception("Failed to process orderbook update")
+            finally:
+                self.orderbook_update_process_queue.task_done()
+                self.log_stats_if_due()
 
+    def opening_trade_logic(self, kalshi_id, poly_id):
+        """
+        Compare the best asks for a matched Kalshi/Polymarket pair and queue an opening trade when net spread is positive.
+        """
 
-            poly_orderbook = market_holder.poly_orderbooks.get(asset_id)
-            kalshi_orderbook = market_holder.kalshi_orderbooks.get(kalshi_eq_asset_id)
+        kalshi_orderbook = self.market_holder.kalshi_orderbooks[kalshi_id]
+        poly_orderbook = self.market_holder.poly_orderbooks[poly_id]
 
-            if not poly_orderbook or not kalshi_orderbook:
-                orderbook_update_queue.task_done()
-                continue
+        if kalshi_orderbook is None or poly_orderbook is None:
+            return
 
-            p_bid_data = poly_orderbook.best_bid()
-            p_ask_data = poly_orderbook.best_ask()
-            k_bid_data = kalshi_orderbook.best_bid()
-            k_ask_data = kalshi_orderbook.best_ask()
+        kalshi_best_ask = kalshi_orderbook.best_ask()
+        poly_best_ask = poly_orderbook.best_ask()
 
-            await process_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data, asset_id, kalshi_eq_asset_id,order_process_queue)
+        if not all([kalshi_best_ask, poly_best_ask]):
+            self.incomplete_book_count += 1
+            return
 
-        if exchange == Exchange.KALSHI:
-            poly_ids = market_holder.k_to_p_map.get(asset_id)
-            if not poly_ids:
-                orderbook_update_queue.task_done()
-                continue
-
-            poly_eq_asset_id = poly_ids[0]
-            kalshi_orderbook = market_holder.kalshi_orderbooks.get(asset_id)
-            poly_orderbook = market_holder.poly_orderbooks.get(poly_eq_asset_id)
-
-            if not poly_orderbook or not kalshi_orderbook:
-                orderbook_update_queue.task_done()
-                continue
-
-                # 2. Extract the dicts
-            p_bid_data = poly_orderbook.best_bid()
-            p_ask_data = poly_orderbook.best_ask()
-            k_bid_data = kalshi_orderbook.best_bid()
-            k_ask_data = kalshi_orderbook.best_ask()
-
-            await process_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data, poly_eq_asset_id, asset_id,order_process_queue)
-
-            #await log_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data)
-
-
-        orderbook_update_queue.task_done()
-
-
-async def process_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data, poly_id, kalshi_id, order_process_queue):
-
-    if not all([p_bid_data, p_ask_data, k_bid_data, k_ask_data]):
-        return
-
-    best_poly_bid, best_poly_bid_volume = p_bid_data["bid"], p_bid_data["volume"]
-    best_poly_ask, best_poly_ask_volume = p_ask_data["ask"], p_ask_data["volume"]
-    best_kalshi_bid, best_kalshi_bid_volume = k_bid_data["bid"], k_bid_data["volume"]
-    best_kalshi_ask, best_kalshi_ask_volume = k_ask_data["ask"], k_ask_data["volume"]
-
-    # 2. Asynchronous File Writing
-    if best_kalshi_bid - best_poly_ask > 3:
-        print(f"[ARB FOUND] Kalshi Bid ({best_kalshi_bid}) > Poly Ask ({best_poly_ask})")
-        logging.info(f"[ARB FOUND] Kalshi Bid ({best_kalshi_bid}) > Poly Ask ({best_poly_ask})")
-        min_volume = min(best_kalshi_bid_volume, best_poly_ask_volume)
-        order_process_queue.put_nowait({"bidside": "kalshi", "askside": "poly", "bid_price":best_kalshi_bid, "ask_price":best_poly_ask, "min_volume":min_volume, "kalshi_id":kalshi_id, "poly_id":poly_id })
-
-
-    if best_poly_bid - best_kalshi_ask  > 3:
-        print(f"[ARB FOUND] Poly Bid ({best_poly_bid}) > Kalshi Ask ({best_kalshi_ask})")
-        logging.info(f"[ARB FOUND] Poly Bid ({best_poly_bid}) > Kalshi Ask ({best_kalshi_ask})")
-        min_volume = min(best_poly_bid_volume, best_kalshi_ask_volume)
-        order_process_queue.put_nowait({"bidside": "poly", "askside": "kalshi", "bid_price":best_poly_bid, "ask_price":best_kalshi_ask, "min_volume":min_volume, "kalshi_id":kalshi_id, "poly_id":poly_id })
+        if (poly_best_ask["price"] + kalshi_best_ask["price"] < 1):
+            spread = self.calculate_spread_net_fees(poly_price=poly_best_ask["price"], kalshi_price=kalshi_best_ask["price"])
+            if spread > 0.01:
+                logging.info(f"Spread Detected (net fees): {spread:.4f} | K_ID: {kalshi_id} | P_ID: {poly_id}")
+                self.create_and_place_opening_orders(kalshi_orderbook = kalshi_orderbook, poly_orderbook= poly_orderbook,
+                                                     kalshi_id=kalshi_id, poly_id=poly_id)
 
 
 
-#
-#
-# async def log_both_orderbooks(p_bid_data, p_ask_data, k_bid_data, k_ask_data):
-#     # 1. Guard against None (empty books)
-#     if not all([p_bid_data, p_ask_data, k_bid_data, k_ask_data]):
-#         return
-#
-#     best_poly_bid, best_poly_bid_volume = p_bid_data["bid"], p_bid_data["volume"]
-#     best_poly_ask, best_poly_ask_volume = p_ask_data["ask"], p_ask_data["volume"]
-#     best_kalshi_bid, best_kalshi_bid_volume = k_bid_data["bid"], k_bid_data["volume"]
-#     best_kalshi_ask, best_kalshi_ask_volume = k_ask_data["ask"], k_ask_data["volume"]
-#
-#     # 2. Asynchronous File Writing
-#     if best_kalshi_bid > best_poly_ask + (0.07 * best_kalshi_bid * (1 - best_kalshi_bid)):
-#         async with aiofiles.open('../../results.csv', mode='a', newline='') as csvfile:
-#             row = f"Arb opportunity: Kalshi bid:,{best_kalshi_bid},Poly ask:,{best_poly_ask},Min volume:,{min(best_kalshi_bid_volume, best_poly_ask_volume)}\n"
-#             await csvfile.write(row)
-#
-#         print(f"[ARB FOUND] Kalshi Bid ({best_kalshi_bid}) > Poly Ask ({best_poly_ask})")
-#         logging.info(f"[ARB FOUND] Kalshi Bid ({best_kalshi_bid}) > Poly Ask ({best_poly_ask})")
-#
-#
-#     if best_poly_bid > best_kalshi_ask + (0.07 * best_kalshi_ask * (1 - best_kalshi_ask)):
-#         async with aiofiles.open('../../results.csv', mode='a', newline='') as csvfile:
-#             row = f"Arb opportunity: Poly bid:,{best_poly_bid},Kalshi ask:,{best_kalshi_ask},Min volume:,{min(best_kalshi_ask_volume, best_poly_bid_volume)}\n"
-#             await csvfile.write(row)
-#
-#         print(f"[ARB FOUND] Poly Bid ({best_poly_bid}) > Kalshi Ask ({best_kalshi_ask})")
-#         logging.info(f"[ARB FOUND] Poly Bid ({best_poly_bid}) > Kalshi Ask ({best_kalshi_ask})")
+
+    def calculate_spread_net_fees(self, poly_price:float, kalshi_price: float) \
+            -> float:
+        """
+        Calculate the arbitrage spread after the configured Kalshi and Polymarket fee coefficients.
+        :param kalshi_price: The kalshi ask price
+        :param poly_price: The poly ask price
+        :return: the spread net fees
+        """
+        spread = 0.0
+        spread = 1 - poly_price - kalshi_price - 0.07*kalshi_price*(1-kalshi_price) - 0.03*poly_price*(1-poly_price)
+        return spread
+
+    def create_and_place_opening_orders(self, kalshi_orderbook, poly_orderbook,kalshi_id, poly_id ):
+        """
+        Size an opening trade, verify exchange balances, mark the pair active, and enqueue the execution event.
+        """
+
+        kalshi_price = kalshi_orderbook.best_ask()["price"]
+        poly_price = poly_orderbook.best_ask()["price"]
+        kalshi_volume = kalshi_orderbook.ask_volumes[kalshi_price]
+        poly_volume = poly_orderbook.ask_volumes[poly_price]
+
+        min_volume = min(poly_volume, kalshi_volume)
+        if min_volume < self.MIN_TRADE_SIZE:
+            return
+
+        trade_volume = min(int(0.75 * min_volume), self.MAX_SIZE)
+        poly_total_price = poly_price * trade_volume
+        if poly_total_price < 1:
+            return
+        if trade_volume < self.MIN_TRADE_SIZE:
+            return
+
+        kalshi_total_price = 0.07*trade_volume*kalshi_price* (1-kalshi_price) + trade_volume*kalshi_price
+        poly_total_price = 0.03*trade_volume*poly_price* (1-poly_price) + trade_volume*poly_price
+
+        if kalshi_total_price > self.position_manager.kalshi_balance:
+            logging.warning(f"Insufficient Kalshi Balance: {self.position_manager.kalshi_balance}")
+            self.position_manager.active_ids.discard(kalshi_id)
+            self.position_manager.active_ids.discard(poly_id)
+            return
+        if poly_total_price > self.position_manager.poly_balance:
+            logging.warning(f"Insufficient Polymarket Balance: {self.position_manager.poly_balance}")
+            self.position_manager.active_ids.discard(kalshi_id)
+            self.position_manager.active_ids.discard(poly_id)
+            return
+
+        self.position_manager.active_ids.add(kalshi_id)
+        self.position_manager.active_ids.add(poly_id)
+        logging.info(
+            f"Queueing ExecutionEvent: {trade_volume}  volume | K_ask: {kalshi_price} | P_ask: {poly_price} for kalshi: {kalshi_id}"
+            f" Poly {poly_id}")
+        self.execution_signal_count += 1
+        self.execution_queue.put_nowait(ExecutionEvent(OrderSide.BUY,poly_price=poly_price,
+                                                           kalshi_price=kalshi_price, poly_id=poly_id,
+                                                           kalshi_id=kalshi_id,
+                                                           volume=trade_volume))
+
+
+    def log_stats_if_due(self):
+        """
+        Emit a periodic strategy heartbeat containing update, signal, active-pair, and open-position counts.
+        """
+        now = time.monotonic()
+        if now - self.last_stats_log < self.STATS_INTERVAL_SECONDS:
+            return
+
+        self.last_stats_log = now
+        logging.info(
+            "Strategy heartbeat | kalshi_updates=%s | polymarket_updates=%s | incomplete_books=%s | execution_signals=%s | poly_sell_skips=%s | active_ids=%s | open_positions=%s",
+            self.kalshi_update_count,
+            self.poly_update_count,
+            self.incomplete_book_count,
+            self.execution_signal_count,
+            self.poly_sell_skip_count,
+            len(self.position_manager.active_ids),
+            len(self.position_manager.open_positions),
+        )

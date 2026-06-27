@@ -4,6 +4,9 @@ import json
 
 
 async def connect_to_polymarket_websocket():
+    """
+    Connect to the Polymarket market WebSocket with sample token IDs and print incoming messages.
+    """
     try:
         uri = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
         async with websockets.connect(uri) as websocket:
@@ -11,8 +14,8 @@ async def connect_to_polymarket_websocket():
 
             testMessage =  {
                     "assets_ids": [
-                        "20996999543007691583276658905733278225425842004273126945333981068139574656671",
-                        "44766497521417298224542775684305151578865412839932497569295014747238754685930"
+                        "13651748497091237808460113623486770193427477134717425380391907960466586656575"
+                        ,"30749752882380468581455841009460065689112582074809192530663606496981501013213"
                     ],
                     "type": "market",
                     "custom_feature_enabled": False

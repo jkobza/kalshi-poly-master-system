@@ -1,4 +1,3 @@
-from src.state_classes.position_manager import PositionManager
 from src.kalshi_modules.kalshi_orderbook_handler import process_kalshi_orderbook_message, get_kalshi_market_subscription_message
 from src.kalshi_modules.kalshi_user_handler import get_kalshi_user_subscription_message
 import websockets
@@ -6,10 +5,13 @@ import logging
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers
 import json
 import asyncio
-from src.state_classes.orderbook_update_event import OrderbookUpdateEvent, Exchange
+from src.state_classes.events import OrderbookUpdateEvent, Exchange
 
 
 async def listen_kalshi_markets(markets, orderbook_update_process_queue):
+    """
+    Maintain the Kalshi market WebSocket, apply orderbook messages, and enqueue changed market tickers.
+    """
     while True:
         try:
             uri = "wss://api.elections.kalshi.com/trade-api/ws/v2"
@@ -25,7 +27,7 @@ async def listen_kalshi_markets(markets, orderbook_update_process_queue):
                     data = json.loads(message)
                     asset_id = process_kalshi_orderbook_message(markets, data)
                     if asset_id:
-                        orderbook_update_process_queue.put_nowait(OrderbookUpdateEvent(Exchange.KALSHI, asset_id))
+                        add_asset_ids_to_queue(orderbook_update_process_queue, asset_id)
 
         except websockets.ConnectionClosed:
             print("[WARN] Kalshi connection lost. Reconnecting in 5s...")
@@ -36,7 +38,7 @@ async def listen_kalshi_markets(markets, orderbook_update_process_queue):
             print(f"[ERROR] Kalshi error: {e}. Reconnecting in 5s...")
             logging.error("[ERROR] Kalshi error. Reconnecting in 5s...")
             await asyncio.sleep(5)
-
+'''
 async def listen_kalshi_user(position_manager: PositionManager, signal_process_queue):
     # TODO
     while True:
@@ -65,3 +67,18 @@ async def listen_kalshi_user(position_manager: PositionManager, signal_process_q
             print(f"[ERROR] Kalshi error: {e}. Reconnecting in 5s...")
             logging.error("[ERROR] Kalshi error. Reconnecting in 5s...")
             await asyncio.sleep(5)
+'''
+def add_asset_ids_to_queue(orderbook_update_process_queue, asset_id_list):
+    """
+    Convert changed Kalshi asset IDs into orderbook update events for the strategy queue.
+    """
+    for asset in asset_id_list:
+        if asset:
+            orderbook_update_process_queue.put_nowait(OrderbookUpdateEvent(Exchange.KALSHI, asset))
+
+async def get_kalshi_balance(kalshi_client):
+    """
+    Fetch the Kalshi portfolio balance and convert cents to dollars.
+    """
+    response = await kalshi_client.get_balance()
+    return float(response.balance) / 100

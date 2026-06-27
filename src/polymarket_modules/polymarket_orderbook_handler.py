@@ -1,6 +1,9 @@
 from src.state_classes.orderbook import Orderbook
 
 def process_poly_orderbook_message(market, data):
+    """
+    Apply a Polymarket book snapshot or price_change message and return every changed token ID.
+    """
     # book event type means a trade was executed or it's the initial snapshot
     # either way, the full book needs to be refreshed
 
@@ -20,14 +23,13 @@ def process_poly_orderbook_message(market, data):
 
         # Remove later
         #print(f"[POLY BOOK SNAPSHOT] Ticker: {asset_id} Best Bid: " + str(new_book.best_bid()) + " Best Ask: " + str(new_book.best_ask()))
-        return asset_id
-
+        return [asset_id]
 
     elif data['event_type'] == "price_change":
-        last_asset_id = None
+        asset_id_list = []
         for change in data['price_changes']:
-            asset_id = change['asset_id']  # <-- Move back inside the loop
-            last_asset_id = asset_id
+            asset_id = change['asset_id']
+            asset_id_list.append(asset_id)
             if asset_id in market.poly_orderbooks:
                 book = market.poly_orderbooks[asset_id]
 
@@ -50,17 +52,17 @@ def process_poly_orderbook_message(market, data):
                     # print(f"[POLY] New Best Bid | {asset_id} | {new_best_bid}")
                 #if prev_best_ask != new_best_ask:
                     # print(f"[POLY] New Best Ask | {asset_id} | {new_best_ask}")
-        return last_asset_id
+        return asset_id_list
+    else: return []
 
-def get_poly_market_subscription_message(market):
-    # Goes through each asset in the market and adds it to initial polymarket message
-    assetIds = []
-    for i in market.poly_orderbooks.keys():
-        assetIds.append(str(i))
-    print(assetIds)
-    message = {
-        "assets_ids": assetIds,
+def get_polymarket_subscription_message(market):
+    """
+    Create the Polymarket market WebSocket subscription message for every tracked token ID.
+    :param market: The singleton market holder containing Polymarket orderbooks.
+    :return: A JSON-serializable subscription payload.
+    """
+    return {
+        "assets_ids": list(market.poly_orderbooks.keys()),
         "type": "market",
         "custom_feature_enabled": False
     }
-    return message

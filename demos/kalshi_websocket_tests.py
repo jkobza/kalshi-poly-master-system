@@ -8,10 +8,14 @@ ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 
 # Generate authentication headers (see API Keys documentation)
 auth_headers = get_kalshi_headers(ws_url)
-
+"""
+This file has simple manual tests for Kalshi WebSocket subscriptions.
+"""
 
 async def subscribe_to_orderbook(websocket, market_tickers):
-    """Subscribe to orderbook updates for specific markets"""
+    """
+    Send a Kalshi orderbook_delta subscription for the supplied market tickers.
+    """
     subscription = {
         "id": 2,
         "cmd": "subscribe",
@@ -24,6 +28,9 @@ async def subscribe_to_orderbook(websocket, market_tickers):
 
 # Connect with authentication
 async def connect():
+    """
+    Open an authenticated Kalshi WebSocket, subscribe to sample tickers, and print each message.
+    """
     async with websockets.connect(ws_url, additional_headers=auth_headers) as websocket:
         print("Connected to Kalshi WebSocket")
         await subscribe_to_orderbook(websocket, ["KXNCAAMBGAME-26APR04MICHARIZ-MICH", "KXNCAAMBGAME-26APR04MICHARIZ-ARIZ"])

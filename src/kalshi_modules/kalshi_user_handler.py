@@ -1,4 +1,7 @@
 def get_kalshi_user_subscription_message():
+    """
+    Build the Kalshi WebSocket subscription payload for authenticated user order updates.
+    """
 
     subscription_msg = {
         "id": 1,
@@ -8,4 +11,3 @@ def get_kalshi_user_subscription_message():
         }
     }
     return subscription_msg
-

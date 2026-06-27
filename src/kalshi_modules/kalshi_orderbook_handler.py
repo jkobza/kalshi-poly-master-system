@@ -1,19 +1,12 @@
-from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers
 from src.state_classes.market_holder import MarketHolder
 from src.state_classes.orderbook import Orderbook
-
-# WebSocket URL
-ws_url = "wss://api.elections.kalshi.com/trade-api/ws/v2"
-
-# Generate authentication headers (see API Keys documentation)
-auth_headers = get_kalshi_headers(ws_url)
 
 
 def get_kalshi_market_subscription_message(markets: MarketHolder):
     '''
-    Creates the kalshi websocket subscription message to subscribe to all Kalshi markets
-    held in the marketHolder instance
+    Create the Kalshi WebSocket subscription message for every tracked market ticker.
     :param markets: The singleton marketHolder instance
+    :return: A JSON-serializable subscription payload for the orderbook_delta channel.
 
     '''
     asset_ids = []
@@ -33,10 +26,10 @@ def get_kalshi_market_subscription_message(markets: MarketHolder):
 
 def process_kalshi_orderbook_message(markets, message):
     '''
-    Processes a kalshi websocket orderbook message and returns the corresponding assetId
-    There are two types of messages, orderbook snapshots and orderbook updates. Each are handled seperately
+    Process a Kalshi orderbook snapshot or delta and return the affected market ticker.
     :param markets: The singleton marketHolder instance
     :param message: The message to process
+    :return: A one-item asset ID list when a tracked book changed, otherwise None.
     '''
     if message["type"] == "orderbook_snapshot":
         new_book = Orderbook()
@@ -51,7 +44,7 @@ def process_kalshi_orderbook_message(markets, message):
 
         markets.kalshi_orderbooks[asset_id] = new_book
         #print(f"[KALSHI BOOK SNAPSHOT]: Ticker = {asset_id} Best Bid: " + str(new_book.best_bid()) + " Best Ask: " + str(new_book.best_ask()))
-        return asset_id
+        return [asset_id]
 
 
     elif message['type'] == "orderbook_delta":
@@ -69,11 +62,11 @@ def process_kalshi_orderbook_message(markets, message):
             delta = float(book_update['delta_fp'])
             side = book_update["side"]
             if side == "yes":
-                current_vol = book.bidVolumes.get(price, 0.0)
+                current_vol = book.bid_volumes.get(price, 0.0)
                 book.process_bid(price, current_vol + delta)
             elif side == "no":
                 ask_price = round(1.0 - price, 4)
-                current_vol = book.askVolumes.get(ask_price, 0.0)
+                current_vol = book.ask_volumes.get(ask_price, 0.0)
                 book.process_ask(ask_price, current_vol + delta)
 
-            return asset_id
+            return [asset_id]

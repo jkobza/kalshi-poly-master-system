@@ -12,7 +12,8 @@ __pycache__/
 .idea/
 
 # Runtime logs and matcher backups
-logs/
+logs/*
+!logs/opportunities.csv
 data/matchedtable.backup.*.csv
 data/match_review.csv
 

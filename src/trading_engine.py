@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 
 from src.execution_engine import ExecutionEngine
+from src.monitoring.kalshi_market_status import KalshiMarketStatusCache
+from src.monitoring.opportunity_logger import OpportunityLogger
 from src.state_classes.market_holder import MarketHolder
 from src.state_classes.position_manager import PositionManager
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_client
@@ -62,10 +64,15 @@ async def main():
         position_manager = PositionManager(markets, kalshi_balance, poly_balance)
         logging.info(f"Kalshi balance: ${kalshi_balance:.2f}")
         logging.info(f"Polymarket balance: ${poly_balance:.2f}")
+        opportunity_logger = OpportunityLogger()
+        market_status_cache = KalshiMarketStatusCache(ttl_seconds=60.0)
+        logging.info(f"Opportunity CSV log: {opportunity_logger.path}")
         strategy_engine = StrategyEngine(market_holder=markets,position_manager=position_manager,
                                          orderbook_update_process_queue=orderbook_update_process_queue,
                                          user_update_process_queue=user_update_process_queue,
-                                         execution_queue=execution_queue)
+                                         execution_queue=execution_queue,
+                                         opportunity_logger=opportunity_logger,
+                                         market_status_cache=market_status_cache)
         execution_engine = ExecutionEngine(execution_queue=execution_queue,position_manager=position_manager,
                                            poly_client=poly_client,kalshi_client=kalshi_client, market_holder=markets,)
 

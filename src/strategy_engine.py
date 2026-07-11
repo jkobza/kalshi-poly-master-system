@@ -1,31 +1,37 @@
-import aiofiles
 import logging
 import time
 
-from src.kalshi_modules import kalshi_user_handler
-from src.polymarket_modules.polymarket_orderbook_handler import process_poly_orderbook_message
+from src.monitoring.kalshi_market_status import KalshiMarketStatusCache
+from src.monitoring.opportunity_logger import OpportunityLogger, OpportunitySnapshot
 from src.state_classes.market_holder import MarketHolder
-from src.state_classes.orderbook import Orderbook
 from src.state_classes.events import OrderbookUpdateEvent, ExecutionEvent
 from src.util.enums import Exchange, OrderSide
-from src.state_classes.position import Position
-from src.state_classes.order import Order
 from src.state_classes.position_manager import PositionManager
 
 class StrategyEngine:
     def __init__(self, market_holder: MarketHolder, position_manager: PositionManager, orderbook_update_process_queue, user_update_process_queue,
-                 execution_queue):
+                 execution_queue, opportunity_logger: OpportunityLogger | None = None,
+                 market_status_cache: KalshiMarketStatusCache | None = None,
+                 monitor_only: bool = False):
         """
         Store shared state, queues, sizing limits, and heartbeat counters used by the strategy loop.
+
+        Opportunity logging is optional and injected so monitoring stays modular and reusable
+        outside this engine. When monitor_only is True, spreads are logged but never queued
+        for execution.
         """
         self.market_holder = market_holder
         self.position_manager = position_manager
         self.orderbook_update_process_queue = orderbook_update_process_queue
         self.user_update_process_queue = user_update_process_queue
         self.execution_queue = execution_queue
+        self.opportunity_logger = opportunity_logger
+        self.market_status_cache = market_status_cache
+        self.monitor_only = monitor_only
 
         self.MAX_SIZE = 10
         self.MIN_TRADE_SIZE = 1
+        self.MIN_NET_SPREAD = 0.01
         self.STATS_INTERVAL_SECONDS = 30
         self.poly_update_count = 0
         self.kalshi_update_count = 0
@@ -59,6 +65,9 @@ class StrategyEngine:
                         continue
                     kalshi_asset_id = matched_kalshi_ids[0]
 
+                # Always observe the pair for opportunity logging, even when we skip trading.
+                self.log_opportunity_if_enabled(kalshi_asset_id, polymarket_asset_id)
+
                 pair_is_active = (
                         kalshi_asset_id in self.position_manager.active_ids
                         or polymarket_asset_id in self.position_manager.active_ids
@@ -71,7 +80,7 @@ class StrategyEngine:
 
                 if not pair_is_active and not pair_is_open:
                     # Check opening trade logic
-                    if kalshi_asset_id is not None and polymarket_asset_id is not None:
+                    if not self.monitor_only and kalshi_asset_id is not None and polymarket_asset_id is not None:
                         self.opening_trade_logic(kalshi_asset_id, polymarket_asset_id)
 
                     # Check closing trade logic
@@ -81,6 +90,62 @@ class StrategyEngine:
             finally:
                 self.orderbook_update_process_queue.task_done()
                 self.log_stats_if_due()
+
+    def build_opportunity_snapshot(self, kalshi_id: str, poly_id: str) -> OpportunitySnapshot:
+        """
+        Adapt live orderbooks into a plain OpportunitySnapshot for the monitoring package.
+        """
+        kalshi_orderbook = self.market_holder.kalshi_orderbooks.get(kalshi_id)
+        poly_orderbook = self.market_holder.poly_orderbooks.get(poly_id)
+
+        kalshi_best_ask = kalshi_orderbook.best_ask() if kalshi_orderbook else None
+        poly_best_ask = poly_orderbook.best_ask() if poly_orderbook else None
+
+        kalshi_ask = kalshi_best_ask["price"] if kalshi_best_ask else None
+        poly_ask = poly_best_ask["price"] if poly_best_ask else None
+        kalshi_vol = float(kalshi_best_ask["volume"]) if kalshi_best_ask else 0.0
+        poly_vol = float(poly_best_ask["volume"]) if poly_best_ask else 0.0
+
+        net_spread = None
+        if kalshi_ask is not None and poly_ask is not None:
+            net_spread = self.calculate_spread_net_fees(poly_price=poly_ask, kalshi_price=kalshi_ask)
+
+        game_status = "unknown"
+        if self.market_status_cache is not None:
+            game_status = self.market_status_cache.get(kalshi_id)
+
+        return OpportunitySnapshot(
+            kalshi_id=kalshi_id,
+            poly_id=poly_id,
+            kalshi_ask=kalshi_ask,
+            poly_ask=poly_ask,
+            kalshi_ask_volume=kalshi_vol,
+            poly_ask_volume=poly_vol,
+            market_desc=self.market_holder.get_pair_description(kalshi_id, poly_id),
+            game_status=game_status,
+            net_spread=net_spread,
+            min_net_spread=self.MIN_NET_SPREAD,
+        )
+
+    def log_opportunity_if_enabled(self, kalshi_id: str, poly_id: str) -> None:
+        """
+        Feed a plain snapshot into the injected opportunity logger, if one is configured.
+        """
+        if self.opportunity_logger is None:
+            return
+        try:
+            event = self.opportunity_logger.observe(self.build_opportunity_snapshot(kalshi_id, poly_id))
+            if event is not None and event.event in {"opened", "closed"}:
+                logging.info(
+                    "Opportunity %s | %s | duration=%.3fs | net_spread=%s | potential_win_total=%s",
+                    event.event,
+                    event.key,
+                    event.duration_seconds,
+                    event.payload.get("net_spread", ""),
+                    event.payload.get("potential_win_total", ""),
+                )
+        except Exception:
+            logging.exception("Failed to log opportunity for %s / %s", kalshi_id, poly_id)
 
     def opening_trade_logic(self, kalshi_id, poly_id):
         """
@@ -102,7 +167,7 @@ class StrategyEngine:
 
         if (poly_best_ask["price"] + kalshi_best_ask["price"] < 1):
             spread = self.calculate_spread_net_fees(poly_price=poly_best_ask["price"], kalshi_price=kalshi_best_ask["price"])
-            if spread > 0.01:
+            if spread > self.MIN_NET_SPREAD:
                 logging.info(f"Spread Detected (net fees): {spread:.4f} | K_ID: {kalshi_id} | P_ID: {poly_id}")
                 self.create_and_place_opening_orders(kalshi_orderbook = kalshi_orderbook, poly_orderbook= poly_orderbook,
                                                      kalshi_id=kalshi_id, poly_id=poly_id)

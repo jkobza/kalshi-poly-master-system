@@ -33,6 +33,8 @@ This code can place live orders when credentials and funded accounts are configu
 | `src/state_classes/position.py` | Dataclass for a paired Kalshi/Polymarket position. |
 | `src/state_classes/position_manager.py` | Tracks open/closed positions, active asset IDs, balances, and lookup maps. |
 | `src/state_classes/events.py` | Queue event dataclasses for orderbook updates and executions. |
+| `src/matching/` | Discover sports moneylines on Kalshi/Polymarket, match opposite outcomes, write `matchedtable.csv`. |
+| `src/monitoring/` | Modular gap tracking and CSV event logging. No orderbook dependencies; reusable from strategy, notebooks, or other tools. |
 | `src/kalshi_modules/` | Kalshi credentials, WebSocket listener, subscription payloads, and orderbook message handling. |
 | `src/polymarket_modules/` | Polymarket credentials, WebSocket listener, subscription payloads, balance fetches, and orderbook message handling. |
 | `src/util/enums.py` | Shared enums for exchanges, order sides, order status, and position status. |
@@ -43,6 +45,21 @@ This code can place live orders when credentials and funded accounts are configu
 ## Matched Markets
 
 `data/matchedtable.csv` is the source of truth for markets the bot watches. `MarketHolder` loads it once at startup and creates one empty `Orderbook` per listed Kalshi ticker and Polymarket token ID.
+
+### Refreshing matches
+
+Use the sports market matcher to discover open moneylines and pair opposite outcomes:
+
+```bash
+source .venv/bin/activate
+python -m src.matching.run_matcher                 # dry-run
+python -m src.matching.run_matcher --sport mlb     # optional filter
+python -m src.matching.run_matcher --write         # update matchedtable.csv
+```
+
+High-confidence pairs are written to `data/matchedtable.csv`. Unsure candidates go to `data/match_review.csv` and are never auto-added. Optional AI verification for ambiguous pairs uses `OPENAI_API_KEY` (or pass `--no-ai` to skip).
+
+Restart the monitor after `--write` so `MarketHolder` reloads the CSV.
 
 | Column | Meaning |
 | --- | --- |
@@ -97,14 +114,43 @@ POLY_DEFER_EXEC=false
 
 ## Running
 
-From the project root, activate the environment and run the module entrypoint:
+### Opportunity monitor (no orders)
+
+Streams both orderbooks and appends gap lifecycle rows to `logs/opportunities.csv`. Does not place trades. Needs Kalshi credentials for the market WebSocket.
+
+```bash
+source .venv/bin/activate
+python -m src.monitor_opportunities
+```
+
+### Live trading bot
+
+Places live orders when gaps clear the strategy thresholds:
 
 ```bash
 source .venv/bin/activate
 python -m src.trading_engine
 ```
 
-The bot writes operational logs to `logs/bot.log` and trade attempts to `logs/trades.csv`.
+The bot writes operational logs to `logs/bot.log`, trade attempts to `logs/trades.csv`, and arbitrage gap lifecycle events to `logs/opportunities.csv`.
+
+### Opportunity CSV (`logs/opportunities.csv`)
+
+The monitoring package tracks when a buy-both-yes gap opens, how long it stays open, and when it closes. A gap is logged only when net spread after fees exceeds `0.01` (same threshold as the trading strategy). Rows include:
+
+| Column | Meaning |
+| --- | --- |
+| `event` | `opened`, `updated`, or `closed` |
+| `gap_id` | Stable ID for one open→close episode |
+| `market_desc` | Description from `matchedtable.csv` |
+| `game_status` | Kalshi market status (`active`, `closed`, `settled`, …), cached ~60s |
+| `raw_gap` | `1 - kalshi_ask - poly_ask` |
+| `net_spread` | Gap after estimated fees |
+| `potential_win_per_contract` | Net spread (or raw gap if fees unavailable) |
+| `potential_win_total` | Per-contract win × available top-of-book volume |
+| `duration_seconds` | Seconds since this gap opened |
+
+`src/monitoring/` is intentionally separate from orderbooks: feed it plain `OpportunitySnapshot` values from any source.
 
 ## Notes And Limitations
 

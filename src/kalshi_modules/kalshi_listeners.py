@@ -5,7 +5,8 @@ import logging
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers
 import json
 import asyncio
-from src.state_classes.events import OrderbookUpdateEvent, Exchange
+from src.state_classes.events import OrderbookUpdateEvent
+from src.util.enums import Exchange
 
 
 async def listen_kalshi_markets(markets, orderbook_update_process_queue):
@@ -36,7 +37,7 @@ async def listen_kalshi_markets(markets, orderbook_update_process_queue):
 
         except Exception as e:
             print(f"[ERROR] Kalshi error: {e}. Reconnecting in 5s...")
-            logging.error("[ERROR] Kalshi error. Reconnecting in 5s...")
+            logging.exception("Kalshi listener error. Reconnecting in 5s...")
             await asyncio.sleep(5)
 '''
 async def listen_kalshi_user(position_manager: PositionManager, signal_process_queue):

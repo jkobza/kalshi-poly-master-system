@@ -30,15 +30,20 @@ def process_kalshi_orderbook_message(markets, message):
     :param markets: The singleton marketHolder instance
     :param message: The message to process
     :return: A one-item asset ID list when a tracked book changed, otherwise None.
+
+    Note: Kalshi omits yes_dollars_fp / no_dollars_fp when that side has no resting offers
+    (common for settled or empty books).
     '''
-    if message["type"] == "orderbook_snapshot":
+    msg_type = message.get("type")
+    if msg_type == "orderbook_snapshot":
         new_book = Orderbook()
         book_update = message["msg"]
         asset_id = book_update["market_ticker"]
 
-        for yes_bid in book_update["yes_dollars_fp"]:
+        # Keys are optional when a side has no liquidity.
+        for yes_bid in book_update.get("yes_dollars_fp") or []:
             new_book.process_bid(float(yes_bid[0]), float(yes_bid[1]))
-        for no_bid in book_update["no_dollars_fp"]:
+        for no_bid in book_update.get("no_dollars_fp") or []:
             ask_price = round(1.0 - float(no_bid[0]), 4)
             new_book.process_ask(ask_price, float(no_bid[1]))
 
@@ -47,7 +52,7 @@ def process_kalshi_orderbook_message(markets, message):
         return [asset_id]
 
 
-    elif message['type'] == "orderbook_delta":
+    elif msg_type == "orderbook_delta":
         book_update = message["msg"]
         asset_id = book_update["market_ticker"]
         if asset_id in markets.kalshi_orderbooks:
@@ -70,3 +75,5 @@ def process_kalshi_orderbook_message(markets, message):
                 book.process_ask(ask_price, current_vol + delta)
 
             return [asset_id]
+
+    return None

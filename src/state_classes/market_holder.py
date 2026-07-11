@@ -34,11 +34,14 @@ class MarketHolder:
         self.poly_orderbooks: dict[str, Orderbook] = {}
         self.p_to_k_map: defaultdict[str, list[str]] = defaultdict(list)
         self.k_to_p_map: defaultdict[str, list[str]] = defaultdict(list)
+        # (kalshi_id, poly_id) -> human-readable match description from matchedtable.csv
+        self.pair_descriptions: dict[tuple[str, str], str] = {}
         df = pd.read_csv(MATCHED_TABLE_PATH)
         print(df)
         for index, row in df.iterrows():
             poly_id = str(row['poly_id']).strip()
             kalshi_id = str(row['kalshi_id']).strip()
+            market_desc = str(row.get('market_desc', '') or '').strip()
             if kalshi_id not in self.kalshi_orderbooks:
                 self.kalshi_orderbooks[kalshi_id] = Orderbook()
 
@@ -47,7 +50,14 @@ class MarketHolder:
                 # Build the relational maps
             self.k_to_p_map[kalshi_id].append(poly_id)
             self.p_to_k_map[poly_id].append(kalshi_id)
+            self.pair_descriptions[(kalshi_id, poly_id)] = market_desc
         self._initialized = True
+
+    def get_pair_description(self, kalshi_id: str, poly_id: str) -> str:
+        """
+        Return the matchedtable description for a Kalshi/Polymarket pair, or an empty string.
+        """
+        return self.pair_descriptions.get((kalshi_id, poly_id), "")
 
     def get_orderbook(self, exchange: Exchange, asset_id: str) -> Orderbook | None:
         """

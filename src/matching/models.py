@@ -35,9 +35,19 @@ class NormalizedOutcome:
 
     @property
     def game_key(self) -> tuple:
-        """Stable key for the underlying game (unordered teams + league + date)."""
+        """
+        Stable key for the underlying game (unordered teams + league + date + start).
+
+        Start time is bucketed to the minute so doubleheaders the same day stay distinct.
+        """
         teams = tuple(sorted((self.team_a, self.team_b)))
-        return (self.league, self.start_date.isoformat() if self.start_date else "", teams)
+        day = self.start_date.isoformat() if self.start_date else ""
+        if self.start_time is not None:
+            ts = self.start_time if self.start_time.tzinfo else self.start_time.replace(tzinfo=None)
+            time_key = ts.strftime("%Y-%m-%dT%H:%M")
+        else:
+            time_key = ""
+        return (self.league, day, teams, time_key)
 
     @property
     def opposite_team(self) -> str:

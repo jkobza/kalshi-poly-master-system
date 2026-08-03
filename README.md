@@ -57,7 +57,7 @@ python -m src.matching.run_matcher --sport mlb     # optional filter
 python -m src.matching.run_matcher --write         # update matchedtable.csv
 ```
 
-High-confidence pairs are written to `data/matchedtable.csv`. Unsure candidates go to `data/match_review.csv` and are never auto-added. Optional AI verification for ambiguous pairs uses `OPENAI_API_KEY` (or pass `--no-ai` to skip).
+High-confidence pairs are written to `data/matchedtable.csv`. Unsure candidates go to `data/match_review.csv` and are never auto-added. Auto-accept requires the same league, teams, date, and start times within 45 minutes (so same-day doubleheaders do not cross-match). Optional AI verification for ambiguous pairs uses `OPENAI_API_KEY` (or pass `--no-ai` to skip).
 
 Restart the monitor after `--write` so `MarketHolder` reloads the CSV.
 

@@ -89,7 +89,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The source also imports `kalshi_python_async` and `py_clob_client_v2`. Make sure those exchange client packages are available in the environment if they are not installed by your local requirements flow.
+`requirements.txt` is intentionally limited to direct dependencies imported by `src/` and `demos/`. It includes both the current Polymarket CLOB V2 client used by the bot and the legacy CLOB client still used by `demos/poly_tests.py`.
 
 Create `secrets/.env` and `secrets/kalshi_private_key.txt` before running the live bot. Required environment variables are:
 
@@ -159,4 +159,4 @@ The monitoring package tracks when a buy-both-yes gap opens, how long it stays o
 - Position state is in memory. Restarting the process loses open-position tracking unless reconciled manually.
 - User order streams are scaffolded but not wired into the main loop.
 - Fee coefficients, spread threshold, max size, and minimum size live in `StrategyEngine` rather than a config file.
-- `requirements.txt` contains many unrelated packages from the development environment; it is not a minimal production dependency list.
+- `requirements.txt` tracks direct imports only; transitive dependencies are resolved by pip when installed.

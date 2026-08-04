@@ -11,7 +11,8 @@ from typing import Any, Literal, Optional
 
 MarketType = Literal["moneyline", "other"]
 Confidence = Literal["high", "medium", "low"]
-Exchange = Literal["kalshi", "polymarket"]
+# Venue tags written to matchedtable.csv exchange_a / exchange_b.
+Exchange = Literal["kalshi", "poly_global", "poly_us"]
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class NormalizedOutcome:
     """
 
     exchange: Exchange
-    exchange_id: str  # Kalshi ticker or Polymarket CLOB token id
+    exchange_id: str  # Kalshi ticker, Global CLOB token id, or US market slug
     league: str
     sport: str
     start_date: Optional[date]
@@ -59,14 +60,31 @@ class NormalizedOutcome:
 @dataclass
 class MatchCandidate:
     """
-    A proposed opposite-side arb pair: Polymarket token vs Kalshi ticker.
+    A proposed opposite-side arb pair between any two venues.
     """
 
-    poly: NormalizedOutcome
-    kalshi: NormalizedOutcome
+    leg_a: NormalizedOutcome
+    leg_b: NormalizedOutcome
     score: float
     reason: str
     needs_ai: bool = False
+
+    # Back-compat aliases used by older call sites / AI payload helpers.
+    @property
+    def kalshi(self) -> NormalizedOutcome:
+        if self.leg_a.exchange == "kalshi":
+            return self.leg_a
+        if self.leg_b.exchange == "kalshi":
+            return self.leg_b
+        return self.leg_a
+
+    @property
+    def poly(self) -> NormalizedOutcome:
+        if self.leg_a.exchange.startswith("poly"):
+            return self.leg_a
+        if self.leg_b.exchange.startswith("poly"):
+            return self.leg_b
+        return self.leg_b
 
 
 @dataclass

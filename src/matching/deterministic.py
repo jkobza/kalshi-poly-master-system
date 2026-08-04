@@ -1,8 +1,9 @@
 """
-Deterministic matching of Kalshi and Polymarket moneyline outcomes.
+Deterministic matching of sports moneyline outcomes across venues.
 
-Builds opposite-side arb pairs (Poly team A ↔ Kalshi team B) when the underlying
-game matches with high confidence. Ambiguous leftovers are flagged for AI/review.
+Builds opposite-side arb pairs between any two venues (kalshi, poly_global,
+poly_us) when the underlying game matches with high confidence. Ambiguous
+leftovers are flagged for AI/review.
 
 High-confidence auto-accept requires league + teams + date + start times within
 START_TIME_TOLERANCE_MINUTES so doubleheaders on the same day do not cross-match.
@@ -22,6 +23,8 @@ AMBIGUOUS_SCORE = 0.55
 # Same game if both start times fall within this window (handles minor feed skew).
 START_TIME_TOLERANCE_MINUTES = 45
 
+VENUE_ORDER = {"kalshi": 0, "poly_global": 1, "poly_us": 2, "polymarket": 1}
+
 
 def _teams_set(o: NormalizedOutcome) -> frozenset[str]:
     return frozenset({o.team_a, o.team_b})
@@ -35,6 +38,14 @@ def _time_delta_minutes(a: Optional[datetime], b: Optional[datetime]) -> Optiona
     if b.tzinfo is None:
         b = b.replace(tzinfo=timezone.utc)
     return abs((a - b).total_seconds()) / 60.0
+
+
+def _order_legs(a: NormalizedOutcome, b: NormalizedOutcome) -> tuple[NormalizedOutcome, NormalizedOutcome]:
+    oa = VENUE_ORDER.get(a.exchange, 9)
+    ob = VENUE_ORDER.get(b.exchange, 9)
+    if oa < ob or (oa == ob and a.exchange_id <= b.exchange_id):
+        return a, b
+    return b, a
 
 
 def _same_game(a: NormalizedOutcome, b: NormalizedOutcome) -> tuple[float, str, bool]:
@@ -97,98 +108,129 @@ def _same_game(a: NormalizedOutcome, b: NormalizedOutcome) -> tuple[float, str, 
 
 
 def build_candidates(
-    kalshi_outcomes: Iterable[NormalizedOutcome],
-    poly_outcomes: Iterable[NormalizedOutcome],
+    *outcome_groups: Iterable[NormalizedOutcome],
 ) -> tuple[list[MatchCandidate], list[MatchCandidate]]:
     """
-    Build high-confidence and ambiguous opposite-side candidates.
+    Build high-confidence and ambiguous opposite-side candidates across venues.
 
-    When multiple Poly outcomes could match one Kalshi market, keep the closest
-    start-time pairing for high-confidence accepts.
+    Accepts one or more outcome iterables (kalshi, poly_global, poly_us, ...).
+    For each ordered venue pair, keep the closest start-time opposite-side match
+    per (leg, counterparty_venue).
     """
     high: list[MatchCandidate] = []
     ambiguous: list[MatchCandidate] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
 
-    kalshi_list = list(kalshi_outcomes)
-    poly_list = list(poly_outcomes)
+    outcomes = [o for group in outcome_groups for o in group]
+    by_venue: dict[str, list[NormalizedOutcome]] = defaultdict(list)
+    by_league: dict[str, list[NormalizedOutcome]] = defaultdict(list)
+    for o in outcomes:
+        by_venue[o.exchange].append(o)
+        by_league[o.league].append(o)
 
-    # Index poly by league for speed
-    poly_by_league: dict[str, list[NormalizedOutcome]] = defaultdict(list)
-    for p in poly_list:
-        poly_by_league[p.league].append(p)
-
-    # Collect scored opposite-side candidates, then pick best time match per kalshi/poly side.
+    venues = sorted(by_venue.keys(), key=lambda v: VENUE_ORDER.get(v, 9))
     provisional: list[MatchCandidate] = []
 
-    for k in kalshi_list:
-        pool = list(poly_by_league.get(k.league) or [])
-        # If league unknown/empty, search all (expensive but rare)
-        if not pool and not k.league:
-            pool = poly_list
-        for p in pool:
-            score, reason, needs_ai = _same_game(k, p)
-            if score < AMBIGUOUS_SCORE:
-                continue
-            # Opposite-side arb pair only
-            if p.outcome_team == k.outcome_team:
-                continue
-            if p.outcome_team != k.opposite_team and k.outcome_team != p.opposite_team:
-                # Still allow if both are on the game but not exact opposite mapping
-                if p.outcome_team not in _teams_set(k):
-                    continue
-                needs_ai = True
-                reason = reason + "+outcome_side_unclear"
+    for i, venue_a in enumerate(venues):
+        for venue_b in venues[i + 1 :]:
+            for a in by_venue[venue_a]:
+                pool = [b for b in by_league.get(a.league, []) if b.exchange == venue_b]
+                if not pool and not a.league:
+                    pool = list(by_venue[venue_b])
+                for b in pool:
+                    score, reason, needs_ai = _same_game(a, b)
+                    if score < AMBIGUOUS_SCORE:
+                        continue
+                    if b.outcome_team == a.outcome_team:
+                        continue
+                    if b.outcome_team != a.opposite_team and a.outcome_team != b.opposite_team:
+                        if b.outcome_team not in _teams_set(a):
+                            continue
+                        needs_ai = True
+                        reason = reason + "+outcome_side_unclear"
 
-            pair_key = (p.exchange_id, k.exchange_id)
-            if pair_key in seen:
-                continue
-            seen.add(pair_key)
+                    leg_a, leg_b = _order_legs(a, b)
+                    pair_key = (leg_a.exchange, leg_a.exchange_id, leg_b.exchange, leg_b.exchange_id)
+                    if pair_key in seen:
+                        continue
+                    seen.add(pair_key)
 
-            provisional.append(
-                MatchCandidate(
-                    poly=p,
-                    kalshi=k,
-                    score=score,
-                    reason=reason,
-                    needs_ai=needs_ai or score < HIGH_SCORE,
-                )
-            )
+                    provisional.append(
+                        MatchCandidate(
+                            leg_a=leg_a,
+                            leg_b=leg_b,
+                            score=score,
+                            reason=reason,
+                            needs_ai=needs_ai or score < HIGH_SCORE,
+                        )
+                    )
 
-    # For each Kalshi id, if several high-confidence Poly opposite sides exist,
-    # keep only the closest start-time match (or highest score).
-    best_by_kalshi: dict[str, MatchCandidate] = {}
+    # Keep closest start-time high-confidence match per (leg, counterparty venue).
+    best: dict[tuple[str, str, str], MatchCandidate] = {}
     for c in provisional:
         if c.score < HIGH_SCORE or c.needs_ai:
             ambiguous.append(c)
             continue
-        kid = c.kalshi.exchange_id
-        existing = best_by_kalshi.get(kid)
-        if existing is None:
-            best_by_kalshi[kid] = c
-            continue
-        # Prefer closer start times, then higher score
-        d_new = _time_delta_minutes(c.kalshi.start_time, c.poly.start_time)
-        d_old = _time_delta_minutes(existing.kalshi.start_time, existing.poly.start_time)
-        replace = False
-        if d_new is not None and d_old is not None and d_new < d_old:
-            replace = True
-        elif (d_new is None) == (d_old is None) and c.score > existing.score:
-            replace = True
-        elif d_old is None and d_new is not None:
-            replace = True
-        if replace:
-            # Demote the worse same-day candidate to review rather than silently drop
-            existing.needs_ai = True
-            existing.reason = existing.reason + "+superseded_by_closer_start_time"
-            ambiguous.append(existing)
-            best_by_kalshi[kid] = c
-        else:
+
+        keys = [
+            (c.leg_a.exchange, c.leg_a.exchange_id, c.leg_b.exchange),
+            (c.leg_b.exchange, c.leg_b.exchange_id, c.leg_a.exchange),
+        ]
+        # One candidate occupies both directed keys; demote if either is superseded.
+        replace_existing: list[MatchCandidate] = []
+        keep = True
+        for key in keys:
+            existing = best.get(key)
+            if existing is None:
+                continue
+            if existing is c:
+                continue
+            d_new = _time_delta_minutes(c.leg_a.start_time, c.leg_b.start_time)
+            d_old = _time_delta_minutes(existing.leg_a.start_time, existing.leg_b.start_time)
+            better = False
+            if d_new is not None and d_old is not None and d_new < d_old:
+                better = True
+            elif (d_new is None) == (d_old is None) and c.score > existing.score:
+                better = True
+            elif d_old is None and d_new is not None:
+                better = True
+            if better:
+                replace_existing.append(existing)
+            else:
+                keep = False
+                break
+
+        if not keep:
             c.needs_ai = True
             c.reason = c.reason + "+superseded_by_closer_start_time"
             ambiguous.append(c)
+            continue
 
-    high.extend(best_by_kalshi.values())
+        for existing in replace_existing:
+            if existing.needs_ai and "+superseded_by_closer_start_time" in existing.reason:
+                continue
+            existing.needs_ai = True
+            existing.reason = existing.reason + "+superseded_by_closer_start_time"
+            ambiguous.append(existing)
+            # Drop superseded from best map
+            for key, val in list(best.items()):
+                if val is existing:
+                    del best[key]
+
+        for key in keys:
+            best[key] = c
+
+    # Unique candidates (each stored under two keys)
+    unique_high: list[MatchCandidate] = []
+    seen_ids: set[int] = set()
+    for c in best.values():
+        cid = id(c)
+        if cid in seen_ids:
+            continue
+        seen_ids.add(cid)
+        unique_high.append(c)
+
+    high.extend(unique_high)
     return high, ambiguous
 
 

@@ -5,6 +5,7 @@ Discover open Kalshi sports game markets via the events API.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Iterable, Optional
 
 import requests
@@ -25,11 +26,32 @@ DEFAULT_SERIES = [
 ]
 
 
-def _get_json(path: str, params: Optional[dict] = None, timeout: float = 30.0) -> dict[str, Any]:
+def _get_json(
+    path: str,
+    params: Optional[dict] = None,
+    timeout: float = 30.0,
+    max_retries: int = 5,
+) -> dict[str, Any]:
     url = f"{KALSHI_BASE}{path}"
-    response = requests.get(url, params=params or {}, timeout=timeout)
-    response.raise_for_status()
-    return response.json()
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, params=params or {}, timeout=timeout)
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after and str(retry_after).isdigit() else min(2 ** attempt, 20)
+                logging.warning("Kalshi rate limited on %s; sleeping %.1fs", path, wait)
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_error = exc
+            wait = min(2 ** attempt, 20)
+            logging.warning("Kalshi request failed (%s); retry in %.1fs", exc, wait)
+            time.sleep(wait)
+    assert last_error is not None
+    raise last_error
 
 
 def list_game_series_tickers(extra: Optional[Iterable[str]] = None) -> list[str]:
@@ -79,6 +101,7 @@ def fetch_open_events_for_series(series_ticker: str, limit: int = 200) -> list[d
             break
         if len(events) >= limit * 5:
             break
+        time.sleep(0.15)
     return events
 
 
@@ -126,5 +149,6 @@ def discover_kalshi_game_markets(
                 annotated["_event_title"] = event.get("title") or ""
                 annotated["_event_subtitle"] = event.get("sub_title") or ""
                 markets.append(annotated)
+        time.sleep(0.2)
     logging.info("Kalshi discovery: %s markets across %s series", len(markets), len(series_list))
     return markets

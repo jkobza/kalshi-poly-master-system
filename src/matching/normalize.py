@@ -11,7 +11,12 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from src.matching.models import NormalizedOutcome
-from src.matching.team_aliases import canonicalize_team, league_from_kalshi_series, league_from_poly_sport
+from src.matching.team_aliases import (
+    LEAGUE_ALIASES,
+    canonicalize_team,
+    league_from_kalshi_series,
+    league_from_poly_sport,
+)
 
 ET = ZoneInfo("America/New_York")
 
@@ -122,24 +127,56 @@ def normalize_kalshi_markets(raw_markets: list[dict[str, Any]]) -> list[Normaliz
         team_b = canonicalize_team(league, team_b_raw)
         outcome_team = canonicalize_team(league, yes_team_raw)
         if outcome_team not in {team_a, team_b}:
-            if canonicalize_team(league, team_a_raw) == outcome_team:
-                outcome_team = team_a
-            elif canonicalize_team(league, team_b_raw) == outcome_team:
-                outcome_team = team_b
+            # Kalshi often truncates long names in yes_sub_title / event title.
+            # Fall back to the market ticker suffix (e.g. ...-NYY).
+            ticker = str(market.get("ticker") or "")
+            suffix = ticker.rsplit("-", 1)[-1].strip() if "-" in ticker else ""
+            if suffix:
+                outcome_team = canonicalize_team(league, suffix)
+            if outcome_team not in {team_a, team_b}:
+                if canonicalize_team(league, team_a_raw) == outcome_team:
+                    outcome_team = team_a
+                elif canonicalize_team(league, team_b_raw) == outcome_team:
+                    outcome_team = team_b
 
+        # If title parse left a truncated team, prefer codes from the event ticker tail.
         event_ticker = str(market.get("_event_ticker") or market.get("event_ticker") or "")
         ticker_date, ticker_start = _parse_kalshi_ticker_start(event_ticker)
+        m_teams = re.search(r"\d{4}([A-Z0-9]+)$", event_ticker or "")
+        if m_teams:
+            blob = m_teams.group(1)
+            league_codes = LEAGUE_ALIASES.get(league or "", {})
+            # Heuristic: last 2–3 char codes glued, e.g. TORSD, STLNYY, WSHPHI
+            for size_a, size_b in ((3, 3), (2, 3), (3, 2), (2, 2)):
+                if len(blob) == size_a + size_b:
+                    code_a, code_b = blob[:size_a], blob[size_a:]
+                    ca, cb = canonicalize_team(league, code_a), canonicalize_team(league, code_b)
+                    if ca in league_codes and cb in league_codes:
+                        team_a, team_b = ca, cb
+                        break
 
-        # Prefer API game-time fields; fall back to Eastern HHMM embedded in the ticker.
+        # Prefer Eastern HHMM embedded in sports tickers. Kalshi occurrence/expiration
+        # fields are often settlement-oriented and can disagree with Polymarket startTime
+        # by hours, which breaks same-game matching.
         start = (
-            _parse_dt(market.get("occurrence_datetime"))
-            or ticker_start
+            ticker_start
+            or _parse_dt(market.get("occurrence_datetime"))
             or _parse_dt(market.get("expected_expiration_time"))
             or _parse_dt(market.get("close_time"))
         )
         start_date: Optional[date] = ticker_date or (start.date() if start else None)
         if start is not None and start_date is None:
             start_date = start.astimezone(timezone.utc).date()
+
+        if outcome_team not in {team_a, team_b}:
+            logging.debug(
+                "Skip Kalshi market with unresolved outcome team: %s (%s vs %s / %s)",
+                market.get("ticker"),
+                outcome_team,
+                team_a,
+                team_b,
+            )
+            continue
 
         outcomes.append(
             NormalizedOutcome(
@@ -191,7 +228,7 @@ def normalize_poly_markets(raw_rows: list[dict[str, Any]]) -> list[NormalizedOut
 
         outcomes.append(
             NormalizedOutcome(
-                exchange="polymarket",
+                exchange="poly_global",
                 exchange_id=str(row.get("token_id") or ""),
                 league=league,
                 sport=sport or league,
@@ -220,5 +257,81 @@ def normalize_poly_markets(raw_rows: list[dict[str, Any]]) -> list[NormalizedOut
             deduped[key] = outcome
             continue
         if "spread" in existing.title.lower() and "spread" not in outcome.title.lower():
+            deduped[key] = outcome
+    return list(deduped.values())
+
+
+def normalize_poly_us_markets(raw_rows: list[dict[str, Any]]) -> list[NormalizedOutcome]:
+    """
+    Normalize Polymarket US gateway moneyline / game-winner outcome rows.
+    """
+    outcomes: list[NormalizedOutcome] = []
+    for row in raw_rows:
+        sport = str(row.get("sport") or "")
+        league = league_from_poly_sport(sport)
+        market_type = str(row.get("sports_market_type") or "").lower()
+        if market_type == "futures" or market_type.endswith("_futures"):
+            continue
+        if market_type and market_type not in {"moneyline", "ml"} and not market_type.endswith("_winner"):
+            continue
+        siblings = row.get("sibling_outcomes") or []
+        if len(siblings) != 2:
+            continue
+        team_a = canonicalize_team(league, str(siblings[0]))
+        team_b = canonicalize_team(league, str(siblings[1]))
+        outcome_raw = str(row.get("outcome_name") or "")
+        outcome_abbr = str(row.get("outcome_abbr") or "")
+        outcome_team = canonicalize_team(league, outcome_raw)
+        if outcome_team not in {team_a, team_b} and outcome_abbr:
+            outcome_team = canonicalize_team(league, outcome_abbr)
+        start = _parse_dt(row.get("start_time"))
+        start_date = start.date() if start else None
+        slug = str(row.get("slug") or "")
+        if start_date is None:
+            m = re.search(r"(20\d{2})-(\d{2})-(\d{2})", slug)
+            if m:
+                try:
+                    start_date = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                except ValueError:
+                    pass
+
+        if outcome_team not in {team_a, team_b}:
+            logging.debug(
+                "Skip Poly US outcome with unresolved team: %s (%s vs %s / %s)",
+                row.get("exchange_id") or row.get("token_id"),
+                outcome_team,
+                team_a,
+                team_b,
+            )
+            continue
+
+        outcomes.append(
+            NormalizedOutcome(
+                exchange="poly_us",
+                exchange_id=str(row.get("exchange_id") or row.get("token_id") or ""),
+                league=league,
+                sport=sport or league,
+                start_date=start_date,
+                start_time=start,
+                team_a=team_a,
+                team_b=team_b,
+                outcome_team=outcome_team,
+                market_type="moneyline",
+                title=str(row.get("question") or row.get("event_title") or ""),
+                raw={
+                    "slug": slug,
+                    "sport": sport,
+                    "side_id": row.get("side_id"),
+                    "outcome_name": row.get("outcome_name"),
+                    "outcome_abbr": outcome_abbr,
+                    "sibling_outcomes": siblings,
+                },
+            )
+        )
+
+    deduped: dict[tuple, NormalizedOutcome] = {}
+    for outcome in outcomes:
+        key = (outcome.game_key, outcome.outcome_team)
+        if key not in deduped:
             deduped[key] = outcome
     return list(deduped.values())

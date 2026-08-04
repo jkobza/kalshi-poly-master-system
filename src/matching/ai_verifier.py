@@ -22,32 +22,29 @@ def _api_key() -> Optional[str]:
     return os.getenv("OPENAI_API_KEY") or os.getenv("MATCHER_OPENAI_API_KEY")
 
 
-def _candidate_payload(candidate: MatchCandidate) -> dict:
-    p, k = candidate.poly, candidate.kalshi
+def _leg_payload(leg) -> dict:
     return {
-        "polymarket": {
-            "title": p.title,
-            "league": p.league,
-            "date": p.start_date.isoformat() if p.start_date else None,
-            "teams": [p.team_a, p.team_b],
-            "outcome_team": p.outcome_team,
-            "token_id": p.exchange_id,
-            "market_type": p.market_type,
-        },
-        "kalshi": {
-            "title": k.title,
-            "league": k.league,
-            "date": k.start_date.isoformat() if k.start_date else None,
-            "teams": [k.team_a, k.team_b],
-            "outcome_team": k.outcome_team,
-            "ticker": k.exchange_id,
-            "market_type": k.market_type,
-        },
+        "exchange": leg.exchange,
+        "title": leg.title,
+        "league": leg.league,
+        "date": leg.start_date.isoformat() if leg.start_date else None,
+        "start_time": leg.start_time.isoformat() if leg.start_time else None,
+        "teams": [leg.team_a, leg.team_b],
+        "outcome_team": leg.outcome_team,
+        "ticker": leg.exchange_id,
+        "market_type": leg.market_type,
+    }
+
+
+def _candidate_payload(candidate: MatchCandidate) -> dict:
+    return {
+        "leg_a": _leg_payload(candidate.leg_a),
+        "leg_b": _leg_payload(candidate.leg_b),
         "deterministic_score": candidate.score,
         "deterministic_reason": candidate.reason,
         "note": (
             "These would be paired as opposite-side moneyline outcomes for arbitrage "
-            "(Polymarket pays on one team, Kalshi on the other). "
+            "(each leg pays on a different team). "
             "Confirm they refer to the SAME underlying game and are moneyline winner markets."
         ),
     }

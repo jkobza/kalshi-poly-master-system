@@ -23,12 +23,17 @@ OPPORTUNITY_LOG_FIELDS = [
     "timestamp_utc",
     "event",
     "gap_id",
+    "pair_id",
     "market_desc",
-    "kalshi_id",
-    "poly_id",
+    "exchange_a",
+    "exchange_b",
+    "ticker_a",
+    "ticker_b",
+    "side_a",
+    "side_b",
     "game_status",
-    "kalshi_ask",
-    "poly_ask",
+    "ask_a",
+    "ask_b",
     "raw_gap",
     "net_spread",
     "available_volume",
@@ -42,18 +47,23 @@ OPPORTUNITY_LOG_FIELDS = [
 @dataclass
 class OpportunitySnapshot:
     """
-    One plain-data sample of a matched Kalshi/Polymarket pair.
+    One plain-data sample of a matched complementary pair.
 
     Build this from whatever source you have (live books, historical ticks, etc.).
     The logger never touches orderbook objects directly.
     """
 
-    kalshi_id: str
-    poly_id: str
-    kalshi_ask: Optional[float]
-    poly_ask: Optional[float]
-    kalshi_ask_volume: float = 0.0
-    poly_ask_volume: float = 0.0
+    pair_id: str
+    exchange_a: str
+    exchange_b: str
+    ticker_a: str
+    ticker_b: str
+    ask_a: Optional[float]
+    ask_b: Optional[float]
+    ask_a_volume: float = 0.0
+    ask_b_volume: float = 0.0
+    side_a: str = ""
+    side_b: str = ""
     market_desc: str = ""
     game_status: str = "unknown"
     # Net spread after fees; if None, only raw gap (1 - asks) is used for open/close.
@@ -64,17 +74,17 @@ class OpportunitySnapshot:
 
     @property
     def pair_key(self) -> str:
-        return f"{self.kalshi_id}|{self.poly_id}"
+        return self.pair_id or f"{self.exchange_a}:{self.ticker_a}|{self.exchange_b}:{self.ticker_b}"
 
     @property
     def raw_gap(self) -> Optional[float]:
-        if self.kalshi_ask is None or self.poly_ask is None:
+        if self.ask_a is None or self.ask_b is None:
             return None
-        return 1.0 - self.kalshi_ask - self.poly_ask
+        return 1.0 - self.ask_a - self.ask_b
 
     @property
     def available_volume(self) -> float:
-        return min(self.kalshi_ask_volume, self.poly_ask_volume)
+        return min(self.ask_a_volume, self.ask_b_volume)
 
     @property
     def is_gap_open(self) -> bool:
@@ -100,12 +110,17 @@ class OpportunitySnapshot:
 
     def to_payload(self) -> dict:
         return {
+            "pair_id": self.pair_id,
             "market_desc": self.market_desc,
-            "kalshi_id": self.kalshi_id,
-            "poly_id": self.poly_id,
+            "exchange_a": self.exchange_a,
+            "exchange_b": self.exchange_b,
+            "ticker_a": self.ticker_a,
+            "ticker_b": self.ticker_b,
+            "side_a": self.side_a,
+            "side_b": self.side_b,
             "game_status": self.game_status,
-            "kalshi_ask": self.kalshi_ask if self.kalshi_ask is not None else "",
-            "poly_ask": self.poly_ask if self.poly_ask is not None else "",
+            "ask_a": self.ask_a if self.ask_a is not None else "",
+            "ask_b": self.ask_b if self.ask_b is not None else "",
             "raw_gap": self.raw_gap if self.raw_gap is not None else "",
             "net_spread": self.net_spread if self.net_spread is not None else "",
             "available_volume": self.available_volume,
@@ -126,8 +141,9 @@ class OpportunityLogger:
 
         logger = OpportunityLogger()
         logger.observe(OpportunitySnapshot(
-            kalshi_id="...", poly_id="...", kalshi_ask=0.42, poly_ask=0.51,
-            kalshi_ask_volume=20, poly_ask_volume=15, market_desc="Dodgers vs Astros",
+            pair_id="1", exchange_a="kalshi", exchange_b="poly_global",
+            ticker_a="...", ticker_b="...", ask_a=0.42, ask_b=0.51,
+            ask_a_volume=20, ask_b_volume=15, market_desc="Dodgers vs Astros",
             game_status="active", net_spread=0.05,
         ))
     """

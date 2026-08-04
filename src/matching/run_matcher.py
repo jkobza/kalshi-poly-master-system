@@ -1,5 +1,5 @@
 """
-CLI entrypoint for sports market matching.
+CLI entrypoint for sports market matching across Kalshi, Polymarket Global, and Polymarket US.
 
 Examples:
   python -m src.matching.run_matcher
@@ -17,9 +17,14 @@ from pathlib import Path
 from src.matching.ai_verifier import verify_ambiguous
 from src.matching.deterministic import build_candidates, decisions_from_high_confidence
 from src.matching.kalshi_discover import discover_kalshi_game_markets
-from src.matching.models import MatchResult
-from src.matching.normalize import normalize_kalshi_markets, normalize_poly_markets
+from src.matching.models import MatchDecision, MatchResult
+from src.matching.normalize import (
+    normalize_kalshi_markets,
+    normalize_poly_markets,
+    normalize_poly_us_markets,
+)
 from src.matching.poly_discover import discover_poly_moneyline_markets
+from src.matching.poly_us_discover import discover_poly_us_moneyline_markets
 from src.matching.writer import DEFAULT_MATCHED_PATH, DEFAULT_REVIEW_PATH, write_match_outputs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -45,18 +50,22 @@ def setup_logging(verbose: bool = False) -> None:
 def run_match(sport: str | None = None, use_ai: bool = True) -> MatchResult:
     logging.info("Discovering Kalshi markets%s...", f" (filter={sport})" if sport else "")
     kalshi_raw = discover_kalshi_game_markets(sport_filter=sport)
-    logging.info("Discovering Polymarket markets%s...", f" (filter={sport})" if sport else "")
-    poly_raw = discover_poly_moneyline_markets(sport_filter=sport)
+    logging.info("Discovering Polymarket Global markets%s...", f" (filter={sport})" if sport else "")
+    poly_global_raw = discover_poly_moneyline_markets(sport_filter=sport)
+    logging.info("Discovering Polymarket US markets%s...", f" (filter={sport})" if sport else "")
+    poly_us_raw = discover_poly_us_moneyline_markets(sport_filter=sport)
 
     kalshi_norm = normalize_kalshi_markets(kalshi_raw)
-    poly_norm = normalize_poly_markets(poly_raw)
+    poly_global_norm = normalize_poly_markets(poly_global_raw)
+    poly_us_norm = normalize_poly_us_markets(poly_us_raw)
     logging.info(
-        "Normalized outcomes: kalshi=%s polymarket=%s",
+        "Normalized outcomes: kalshi=%s poly_global=%s poly_us=%s",
         len(kalshi_norm),
-        len(poly_norm),
+        len(poly_global_norm),
+        len(poly_us_norm),
     )
 
-    high, ambiguous = build_candidates(kalshi_norm, poly_norm)
+    high, ambiguous = build_candidates(kalshi_norm, poly_global_norm, poly_us_norm)
     logging.info("Deterministic candidates: high=%s ambiguous=%s", len(high), len(ambiguous))
 
     result = MatchResult()
@@ -74,8 +83,6 @@ def run_match(sport: str | None = None, use_ai: bool = True) -> MatchResult:
         else:
             logging.info("AI disabled; sending %s ambiguous candidates to review", len(ambiguous))
             for c in ambiguous:
-                from src.matching.models import MatchDecision
-
                 result.review.append(
                     MatchDecision(
                         candidate=c,
@@ -86,20 +93,24 @@ def run_match(sport: str | None = None, use_ai: bool = True) -> MatchResult:
                     )
                 )
 
-    # Deduplicate accepted by ids and by kalshi/poly uniqueness
-    seen_pairs: set[tuple[str, str]] = set()
-    used_poly: set[str] = set()
-    used_kalshi: set[str] = set()
-    unique_accepted = []
+    # Deduplicate identical pairs. Allow the same ticker to appear in multiple
+    # rows when the counterparty venue differs (e.g. Kalshi↔Global and Kalshi↔US).
+    seen_pairs: set[tuple[tuple[str, str], tuple[str, str]]] = set()
+    used_with_venue: set[tuple[str, str, str]] = set()
+    unique_accepted: list[MatchDecision] = []
     for decision in result.accepted:
-        poly_id = decision.candidate.poly.exchange_id
-        kalshi_id = decision.candidate.kalshi.exchange_id
-        key = (poly_id, kalshi_id)
+        a = decision.candidate.leg_a
+        b = decision.candidate.leg_b
+        leg_a = (a.exchange, a.exchange_id)
+        leg_b = (b.exchange, b.exchange_id)
+        key = tuple(sorted((leg_a, leg_b)))
         if key in seen_pairs:
             continue
-        if poly_id in used_poly or kalshi_id in used_kalshi:
+        lock_a = (a.exchange, a.exchange_id, b.exchange)
+        lock_b = (b.exchange, b.exchange_id, a.exchange)
+        if lock_a in used_with_venue or lock_b in used_with_venue:
             result.review.append(
-                type(decision)(
+                MatchDecision(
                     candidate=decision.candidate,
                     accepted=False,
                     confidence="medium",
@@ -109,15 +120,17 @@ def run_match(sport: str | None = None, use_ai: bool = True) -> MatchResult:
             )
             continue
         seen_pairs.add(key)
-        used_poly.add(poly_id)
-        used_kalshi.add(kalshi_id)
+        used_with_venue.add(lock_a)
+        used_with_venue.add(lock_b)
         unique_accepted.append(decision)
     result.accepted = unique_accepted
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Match Kalshi and Polymarket sports moneylines")
+    parser = argparse.ArgumentParser(
+        description="Match Kalshi / Polymarket Global / Polymarket US sports moneylines"
+    )
     parser.add_argument("--write", action="store_true", help="Write matchedtable.csv and match_review.csv")
     parser.add_argument("--sport", type=str, default=None, help="Optional sport/league filter (e.g. mlb)")
     parser.add_argument("--no-ai", action="store_true", help="Skip AI verifier; ambiguous -> review only")
@@ -134,15 +147,24 @@ def main(argv: list[str] | None = None) -> int:
         len(result.accepted),
         len(result.review),
     )
+    venue_counts: dict[str, int] = {}
+    for decision in result.accepted:
+        c = decision.candidate
+        pair = f"{c.leg_a.exchange}|{c.leg_b.exchange}"
+        venue_counts[pair] = venue_counts.get(pair, 0) + 1
+    logging.info("Accepted by venue pair: %s", venue_counts)
+
     for decision in result.accepted[:20]:
         c = decision.candidate
         logging.info(
-            "ACCEPT %s | poly=%s (%s) | kalshi=%s (%s) | %s",
-            c.poly.league,
-            c.poly.outcome_team,
-            c.poly.exchange_id[:16] + "...",
-            c.kalshi.outcome_team,
-            c.kalshi.exchange_id,
+            "ACCEPT %s | %s %s (%s) | %s %s (%s) | %s",
+            c.leg_a.league or c.leg_b.league,
+            c.leg_a.exchange,
+            c.leg_a.outcome_team,
+            c.leg_a.exchange_id[:48],
+            c.leg_b.exchange,
+            c.leg_b.outcome_team,
+            c.leg_b.exchange_id[:48],
             decision.source,
         )
     if len(result.accepted) > 20:

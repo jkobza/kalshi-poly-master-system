@@ -16,7 +16,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATCHED_PATH = PROJECT_ROOT / "data" / "matchedtable.csv"
 DEFAULT_REVIEW_PATH = PROJECT_ROOT / "data" / "match_review.csv"
 
-MATCHED_FIELDS = ["market_id", "poly_id", "kalshi_id", "market_desc"]
+MATCHED_FIELDS = [
+    "pair_id",
+    "exchange_a",
+    "exchange_b",
+    "ticker_a",
+    "ticker_b",
+    "side_a",
+    "side_b",
+    "market_desc",
+]
 REVIEW_FIELDS = [
     "timestamp_utc",
     "accepted",
@@ -24,24 +33,28 @@ REVIEW_FIELDS = [
     "source",
     "score",
     "detail",
-    "poly_id",
-    "kalshi_id",
-    "poly_title",
-    "kalshi_title",
+    "exchange_a",
+    "exchange_b",
+    "ticker_a",
+    "ticker_b",
+    "side_a",
+    "side_b",
+    "title_a",
+    "title_b",
     "league",
-    "poly_date",
-    "kalshi_date",
-    "poly_outcome",
-    "kalshi_outcome",
+    "date_a",
+    "date_b",
     "reason",
 ]
 
 
 def _desc(decision: MatchDecision) -> str:
     c = decision.candidate
+    a, b = c.leg_a, c.leg_b
+    day = a.start_date or b.start_date or ""
     return (
-        f"{c.poly.outcome_team} Polymarket - {c.kalshi.outcome_team} Kalshi "
-        f"({c.poly.league} {c.poly.start_date or c.kalshi.start_date or ''})"
+        f"{a.outcome_team} {a.exchange} - {b.outcome_team} {b.exchange} "
+        f"({a.league or b.league} {day})"
     ).strip()
 
 
@@ -49,11 +62,16 @@ def matched_rows(decisions: list[MatchDecision]) -> list[dict]:
     rows = []
     for idx, decision in enumerate(decisions, start=1):
         c = decision.candidate
+        a, b = c.leg_a, c.leg_b
         rows.append(
             {
-                "market_id": str(idx),
-                "poly_id": c.poly.exchange_id,
-                "kalshi_id": c.kalshi.exchange_id,
+                "pair_id": str(idx),
+                "exchange_a": a.exchange,
+                "exchange_b": b.exchange,
+                "ticker_a": a.exchange_id,
+                "ticker_b": b.exchange_id,
+                "side_a": a.outcome_team,
+                "side_b": b.outcome_team,
                 "market_desc": _desc(decision),
             }
         )
@@ -65,6 +83,7 @@ def review_rows(decisions: list[MatchDecision]) -> list[dict]:
     rows = []
     for decision in decisions:
         c = decision.candidate
+        a, b = c.leg_a, c.leg_b
         rows.append(
             {
                 "timestamp_utc": now,
@@ -73,15 +92,17 @@ def review_rows(decisions: list[MatchDecision]) -> list[dict]:
                 "source": decision.source,
                 "score": c.score,
                 "detail": decision.detail,
-                "poly_id": c.poly.exchange_id,
-                "kalshi_id": c.kalshi.exchange_id,
-                "poly_title": c.poly.title,
-                "kalshi_title": c.kalshi.title,
-                "league": c.poly.league or c.kalshi.league,
-                "poly_date": c.poly.start_date.isoformat() if c.poly.start_date else "",
-                "kalshi_date": c.kalshi.start_date.isoformat() if c.kalshi.start_date else "",
-                "poly_outcome": c.poly.outcome_team,
-                "kalshi_outcome": c.kalshi.outcome_team,
+                "exchange_a": a.exchange,
+                "exchange_b": b.exchange,
+                "ticker_a": a.exchange_id,
+                "ticker_b": b.exchange_id,
+                "side_a": a.outcome_team,
+                "side_b": b.outcome_team,
+                "title_a": a.title,
+                "title_b": b.title,
+                "league": a.league or b.league,
+                "date_a": a.start_date.isoformat() if a.start_date else "",
+                "date_b": b.start_date.isoformat() if b.start_date else "",
                 "reason": c.reason,
             }
         )

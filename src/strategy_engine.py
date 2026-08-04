@@ -3,7 +3,7 @@ import time
 
 from src.monitoring.kalshi_market_status import KalshiMarketStatusCache
 from src.monitoring.opportunity_logger import OpportunityLogger, OpportunitySnapshot
-from src.state_classes.market_holder import MarketHolder
+from src.state_classes.market_holder import MarketHolder, MatchedPair
 from src.state_classes.events import OrderbookUpdateEvent, ExecutionEvent
 from src.util.enums import Exchange, OrderSide
 from src.state_classes.position_manager import PositionManager
@@ -43,7 +43,7 @@ class StrategyEngine:
 
     async def process_orderbook_updates(self):
         """
-        Consume orderbook update events and run opening logic for matched markets without active or open positions.
+        Consume orderbook update events and run opening logic for matched pairs without active or open positions.
         """
         while True:
             update: OrderbookUpdateEvent = await self.orderbook_update_process_queue.get()
@@ -51,90 +51,91 @@ class StrategyEngine:
                 exchange = update.exchange
                 asset_id = update.assetId
                 if exchange == Exchange.KALSHI:
-                    kalshi_asset_id = asset_id
-                    matched_poly_ids = self.market_holder.k_to_p_map.get(kalshi_asset_id)
-                    if not matched_poly_ids:
-                        continue
-                    polymarket_asset_id = matched_poly_ids[0]
                     self.kalshi_update_count += 1
                 else:
-                    polymarket_asset_id = asset_id
                     self.poly_update_count += 1
-                    matched_kalshi_ids = self.market_holder.p_to_k_map.get(polymarket_asset_id)
-                    if not matched_kalshi_ids:
+
+                pairs = self.market_holder.pairs_for(exchange, asset_id)
+                for pair in pairs:
+                    # Always observe the pair for opportunity logging, even when we skip trading.
+                    self.log_opportunity_if_enabled(pair)
+
+                    tickers = {pair.ticker_a, pair.ticker_b}
+                    pair_is_active = bool(tickers & self.position_manager.active_ids)
+                    pair_is_open = any(
+                        self.position_manager.has_open_position_for_asset(t) for t in tickers
+                    )
+
+                    if pair_is_active or pair_is_open:
                         continue
-                    kalshi_asset_id = matched_kalshi_ids[0]
 
-                # Always observe the pair for opportunity logging, even when we skip trading.
-                self.log_opportunity_if_enabled(kalshi_asset_id, polymarket_asset_id)
-
-                pair_is_active = (
-                        kalshi_asset_id in self.position_manager.active_ids
-                        or polymarket_asset_id in self.position_manager.active_ids
-                )
-
-                pair_is_open = (
-                        self.position_manager.has_open_position_for_asset(kalshi_asset_id)
-                        or self.position_manager.has_open_position_for_asset(polymarket_asset_id)
-                )
-
-                if not pair_is_active and not pair_is_open:
-                    # Check opening trade logic
-                    if not self.monitor_only and kalshi_asset_id is not None and polymarket_asset_id is not None:
-                        self.opening_trade_logic(kalshi_asset_id, polymarket_asset_id)
-
-                    # Check closing trade logic
-                    # TODO
+                    # Live execution still only supports Kalshi ↔ Poly Global.
+                    if (
+                        not self.monitor_only
+                        and pair.is_kalshi_poly_global
+                    ):
+                        self.opening_trade_logic(pair)
             except Exception:
                 logging.exception("Failed to process orderbook update")
             finally:
                 self.orderbook_update_process_queue.task_done()
                 self.log_stats_if_due()
 
-    def build_opportunity_snapshot(self, kalshi_id: str, poly_id: str) -> OpportunitySnapshot:
+    def build_opportunity_snapshot(self, pair: MatchedPair) -> OpportunitySnapshot:
         """
         Adapt live orderbooks into a plain OpportunitySnapshot for the monitoring package.
         """
-        kalshi_orderbook = self.market_holder.kalshi_orderbooks.get(kalshi_id)
-        poly_orderbook = self.market_holder.poly_orderbooks.get(poly_id)
+        book_a = self.market_holder.get_orderbook(pair.exchange_a, pair.ticker_a)
+        book_b = self.market_holder.get_orderbook(pair.exchange_b, pair.ticker_b)
 
-        kalshi_best_ask = kalshi_orderbook.best_ask() if kalshi_orderbook else None
-        poly_best_ask = poly_orderbook.best_ask() if poly_orderbook else None
+        best_a = book_a.best_ask() if book_a else None
+        best_b = book_b.best_ask() if book_b else None
 
-        kalshi_ask = kalshi_best_ask["price"] if kalshi_best_ask else None
-        poly_ask = poly_best_ask["price"] if poly_best_ask else None
-        kalshi_vol = float(kalshi_best_ask["volume"]) if kalshi_best_ask else 0.0
-        poly_vol = float(poly_best_ask["volume"]) if poly_best_ask else 0.0
+        ask_a = best_a["price"] if best_a else None
+        ask_b = best_b["price"] if best_b else None
+        vol_a = float(best_a["volume"]) if best_a else 0.0
+        vol_b = float(best_b["volume"]) if best_b else 0.0
 
         net_spread = None
-        if kalshi_ask is not None and poly_ask is not None:
-            net_spread = self.calculate_spread_net_fees(poly_price=poly_ask, kalshi_price=kalshi_ask)
+        if ask_a is not None and ask_b is not None and pair.is_kalshi_poly_global:
+            # Fee model is Kalshi + Poly Global specific today.
+            kalshi_price = ask_a if pair.exchange_a == "kalshi" else ask_b
+            poly_price = ask_b if pair.exchange_a == "kalshi" else ask_a
+            net_spread = self.calculate_spread_net_fees(poly_price=poly_price, kalshi_price=kalshi_price)
+        elif ask_a is not None and ask_b is not None:
+            net_spread = 1.0 - ask_a - ask_b
 
         game_status = "unknown"
-        if self.market_status_cache is not None:
+        kalshi_id = pair.kalshi_ticker()
+        if self.market_status_cache is not None and kalshi_id:
             game_status = self.market_status_cache.get(kalshi_id)
 
         return OpportunitySnapshot(
-            kalshi_id=kalshi_id,
-            poly_id=poly_id,
-            kalshi_ask=kalshi_ask,
-            poly_ask=poly_ask,
-            kalshi_ask_volume=kalshi_vol,
-            poly_ask_volume=poly_vol,
-            market_desc=self.market_holder.get_pair_description(kalshi_id, poly_id),
+            pair_id=pair.pair_id,
+            exchange_a=pair.exchange_a,
+            exchange_b=pair.exchange_b,
+            ticker_a=pair.ticker_a,
+            ticker_b=pair.ticker_b,
+            side_a=pair.side_a,
+            side_b=pair.side_b,
+            ask_a=ask_a,
+            ask_b=ask_b,
+            ask_a_volume=vol_a,
+            ask_b_volume=vol_b,
+            market_desc=pair.market_desc,
             game_status=game_status,
             net_spread=net_spread,
             min_net_spread=self.MIN_NET_SPREAD,
         )
 
-    def log_opportunity_if_enabled(self, kalshi_id: str, poly_id: str) -> None:
+    def log_opportunity_if_enabled(self, pair: MatchedPair) -> None:
         """
         Feed a plain snapshot into the injected opportunity logger, if one is configured.
         """
         if self.opportunity_logger is None:
             return
         try:
-            event = self.opportunity_logger.observe(self.build_opportunity_snapshot(kalshi_id, poly_id))
+            event = self.opportunity_logger.observe(self.build_opportunity_snapshot(pair))
             if event is not None and event.event in {"opened", "closed"}:
                 logging.info(
                     "Opportunity %s | %s | duration=%.3fs | net_spread=%s | potential_win_total=%s",
@@ -145,15 +146,19 @@ class StrategyEngine:
                     event.payload.get("potential_win_total", ""),
                 )
         except Exception:
-            logging.exception("Failed to log opportunity for %s / %s", kalshi_id, poly_id)
+            logging.exception("Failed to log opportunity for pair %s", pair.pair_id)
 
-    def opening_trade_logic(self, kalshi_id, poly_id):
+    def opening_trade_logic(self, pair: MatchedPair):
         """
         Compare the best asks for a matched Kalshi/Polymarket pair and queue an opening trade when net spread is positive.
         """
+        kalshi_id = pair.kalshi_ticker()
+        poly_id = pair.poly_ticker()
+        if not kalshi_id or not poly_id:
+            return
 
-        kalshi_orderbook = self.market_holder.kalshi_orderbooks[kalshi_id]
-        poly_orderbook = self.market_holder.poly_orderbooks[poly_id]
+        kalshi_orderbook = self.market_holder.kalshi_orderbooks.get(kalshi_id)
+        poly_orderbook = self.market_holder.poly_orderbooks.get(poly_id)
 
         if kalshi_orderbook is None or poly_orderbook is None:
             return
@@ -168,12 +173,16 @@ class StrategyEngine:
         if (poly_best_ask["price"] + kalshi_best_ask["price"] < 1):
             spread = self.calculate_spread_net_fees(poly_price=poly_best_ask["price"], kalshi_price=kalshi_best_ask["price"])
             if spread > self.MIN_NET_SPREAD:
-                logging.info(f"Spread Detected (net fees): {spread:.4f} | K_ID: {kalshi_id} | P_ID: {poly_id}")
-                self.create_and_place_opening_orders(kalshi_orderbook = kalshi_orderbook, poly_orderbook= poly_orderbook,
-                                                     kalshi_id=kalshi_id, poly_id=poly_id)
-
-
-
+                logging.info(
+                    "Spread Detected (net fees): %.4f | pair=%s | K_ID: %s | P_ID: %s",
+                    spread, pair.pair_id, kalshi_id, poly_id,
+                )
+                self.create_and_place_opening_orders(
+                    kalshi_orderbook=kalshi_orderbook,
+                    poly_orderbook=poly_orderbook,
+                    kalshi_id=kalshi_id,
+                    poly_id=poly_id,
+                )
 
     def calculate_spread_net_fees(self, poly_price:float, kalshi_price: float) \
             -> float:

@@ -44,7 +44,7 @@ This code can place live orders when credentials and funded accounts are configu
 
 ## Matched Markets
 
-`data/matchedtable.csv` is the source of truth for markets the bot watches. `MarketHolder` loads it once at startup and creates one empty `Orderbook` per listed Kalshi ticker and Polymarket token ID.
+`data/matchedtable.csv` is the source of truth for markets the bot watches. `MarketHolder` loads it once at startup and creates one empty `Orderbook` per listed ticker. Each row is one complementary arb pair between any two venues (`kalshi`, `poly_global`, or later `poly_us`).
 
 ### Refreshing matches
 
@@ -57,18 +57,19 @@ python -m src.matching.run_matcher --sport mlb     # optional filter
 python -m src.matching.run_matcher --write         # update matchedtable.csv
 ```
 
-High-confidence pairs are written to `data/matchedtable.csv`. Unsure candidates go to `data/match_review.csv` and are never auto-added. Auto-accept requires the same league, teams, date, and start times within 45 minutes (so same-day doubleheaders do not cross-match). Optional AI verification for ambiguous pairs uses `OPENAI_API_KEY` (or pass `--no-ai` to skip).
+High-confidence pairs are written to `data/matchedtable.csv`. Unsure candidates go to `data/match_review.csv` and are never auto-added. Auto-accept requires the same league, teams, date, and start times within 45 minutes (so same-day doubleheaders do not cross-match). The matcher discovers **Kalshi**, **Polymarket Global**, and **Polymarket US**, then emits opposite-side pairs for every venue combination that clears the scorer. Optional AI verification for ambiguous pairs uses `OPENAI_API_KEY` (or pass `--no-ai` to skip).
 
 Restart the monitor after `--write` so `MarketHolder` reloads the CSV.
 
 | Column | Meaning |
 | --- | --- |
-| `market_id` | Local identifier for the matched row. It is currently informational. |
-| `poly_id` | Polymarket CLOB token ID to subscribe to and trade. |
-| `kalshi_id` | Kalshi market ticker to subscribe to and trade. |
+| `pair_id` | Local identifier for the matched pair. |
+| `exchange_a` / `exchange_b` | Venue tags: `kalshi`, `poly_global`, or `poly_us`. |
+| `ticker_a` / `ticker_b` | Venue-native id (Kalshi ticker, Global CLOB token id, or US slug). |
+| `side_a` / `side_b` | Outcome team codes bought on each leg (must differ for complementary arb). |
 | `market_desc` | Human-readable description of the match. |
 
-The lookup maps support one-to-many matches, though the current strategy uses the first match returned for an update.
+Live trading still executes Kalshi ↔ `poly_global` pairs only. Other venue pairs can be logged once present in the CSV.
 
 ## Runtime Flow
 
@@ -142,10 +143,15 @@ The monitoring package tracks when a buy-both-yes gap opens, how long it stays o
 | --- | --- |
 | `event` | `opened`, `updated`, or `closed` |
 | `gap_id` | Stable ID for one open→close episode |
+| `pair_id` | Pair id from `matchedtable.csv` |
+| `exchange_a` / `exchange_b` | Venue tags for each leg |
+| `ticker_a` / `ticker_b` | Venue-native ids |
+| `side_a` / `side_b` | Outcome teams |
 | `market_desc` | Description from `matchedtable.csv` |
 | `game_status` | Kalshi market status (`active`, `closed`, `settled`, …), cached ~60s |
-| `raw_gap` | `1 - kalshi_ask - poly_ask` |
-| `net_spread` | Gap after estimated fees |
+| `ask_a` / `ask_b` | Best ask on each leg |
+| `raw_gap` | `1 - ask_a - ask_b` |
+| `net_spread` | Gap after estimated fees (Kalshi↔Poly Global fee model when applicable) |
 | `potential_win_per_contract` | Net spread (or raw gap if fees unavailable) |
 | `potential_win_total` | Per-contract win × available top-of-book volume |
 | `duration_seconds` | Seconds since this gap opened |

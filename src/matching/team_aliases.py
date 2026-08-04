@@ -37,9 +37,9 @@ MLB: dict[str, list[str]] = {
     "MIA": ["miami marlins", "marlins", "miami", "mia"],
     "MIL": ["milwaukee brewers", "brewers", "milwaukee", "mil"],
     "MIN": ["minnesota twins", "twins", "minnesota", "min"],
-    "NYM": ["new york mets", "mets", "nym"],
-    "NYY": ["new york yankees", "yankees", "nyy"],
-    "OAK": ["oakland athletics", "athletics", "a's", "as", "oak", "ath"],
+    "NYM": ["new york mets", "mets", "nym", "new york m"],
+    "NYY": ["new york yankees", "yankees", "nyy", "new york y"],
+    "OAK": ["oakland athletics", "athletics", "a's", "as", "oak", "ath", "athletics oakland"],
     "PHI": ["philadelphia phillies", "phillies", "philadelphia", "phi"],
     "PIT": ["pittsburgh pirates", "pirates", "pittsburgh", "pit"],
     "SD": ["san diego padres", "padres", "san diego", "sd", "sdp"],
@@ -182,6 +182,7 @@ SERIES_TO_LEAGUE: dict[str, str] = {
 # Polymarket sport slug -> league
 POLY_SPORT_TO_LEAGUE: dict[str, str] = {
     "mlb": "mlb",
+    "mlbb": "mlb",
     "nba": "nba",
     "nhl": "nhl",
     "nfl": "nfl",
@@ -194,6 +195,10 @@ POLY_SPORT_TO_LEAGUE: dict[str, str] = {
     "mls": "mls",
     "laliga": "laliga",
     "ucl": "ucl",
+    "atp": "atp",
+    "wta": "wta",
+    "ufc": "ufc",
+    "cs2": "cs2",
 }
 
 

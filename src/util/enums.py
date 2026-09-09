@@ -5,8 +5,6 @@ class Exchange(Enum):
     Enum for easily representing the two exchanges
     """
     KALSHI = 1
-    POLYMARKET = 2
-    POLYMARKET_GLOBAL = 2
     POLYMARKET_US = 3
 
 class PositionStatus(Enum):

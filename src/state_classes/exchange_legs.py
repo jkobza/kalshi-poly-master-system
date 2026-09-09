@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 @dataclass
-class Leg():
+class Leg(ABC):
     exchange: Exchange
     description: str
     orderbook: Orderbook

@@ -2,9 +2,7 @@ import aiofiles
 import logging
 import time
 
-from src.kalshi_modules import kalshi_user_handler
-from src.polymarket_modules.polymarket_orderbook_handler import process_poly_orderbook_message
-from src.state_classes.market_holder import MarketHolder
+from state_classes.arb_holder import MarketHolder
 from src.state_classes.orderbook import Orderbook
 from src.state_classes.events import OrderbookUpdateEvent, ExecutionEvent
 from src.util.enums import Exchange, OrderSide

@@ -1,6 +1,6 @@
 import uuid
 
-from src.state_classes.market_holder import MarketHolder
+from state_classes.arb_holder import MarketHolder
 from src.state_classes.order import Order
 from src.state_classes.position import Position
 from typing import Optional

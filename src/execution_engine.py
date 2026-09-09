@@ -9,11 +9,9 @@ import uuid
 
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_headers
 from src.state_classes.events import ExecutionEvent
-from src.state_classes.market_holder import MarketHolder
+from state_classes.arb_holder import MarketHolder
 from src.state_classes.order import Order
 from src.state_classes.position_manager import PositionManager
-from py_clob_client_v2.clob_types import MarketOrderArgs, PartialCreateOrderOptions, OrderType
-from py_clob_client_v2.order_builder.constants import BUY,SELL
 from src.state_classes.position import Position
 
 
@@ -42,6 +40,22 @@ def enum_name(value):
     Return an enum member name when available, otherwise fall back to a string representation.
     """
     return value.name if hasattr(value, "name") else str(value)
+
+
+def poly_response_value(response, attr, default=None):
+    """
+    Read a value from either a unified SDK model or a dict-like fake used in tests.
+    """
+    if isinstance(response, dict):
+        return response.get(attr, default)
+    return getattr(response, attr, default)
+
+
+def polymarket_defer_exec_requested():
+    """
+    Preserve old defer-exec log visibility while using the unified SDK.
+    """
+    return os.getenv("POLYMARKET_GLOBAL_DEFER_EXEC", "").lower() in {"1", "true", "yes"}
 
 
 class ExecutionEngine:
@@ -162,39 +176,39 @@ class ExecutionEngine:
         Submit a Polymarket fill-or-kill market order, update cash on matched fills, log the attempt, and return an Order.
         """
         try:
-            tick_size = await asyncio.to_thread(self.poly_client.get_tick_size, token_id)
-
             if side == OrderSide.BUY:
-                action = BUY
-            else: action = SELL
+                action = "BUY"
+            else: action = "SELL"
 
             if side == OrderSide.BUY:
                 amount = price * volume
+                order_kwargs = {
+                    "amount": amount,
+                    "max_spend": amount,
+                    "max_price": price,
+                }
             else:
                 amount = volume
+                order_kwargs = {
+                    "shares": amount,
+                    "min_price": price,
+                }
 
-            order_args = MarketOrderArgs(
-                token_id=token_id,
-                amount=amount,
-                price=price,
-                side=action,
-                order_type=OrderType.FOK,
-                user_usdc_balance=self.position_manager.poly_balance,
-            )
-            options = PartialCreateOrderOptions(
-                tick_size=tick_size,
-                neg_risk=False
-            )
-            defer_exec = os.getenv("POLY_DEFER_EXEC", "").lower() in {"1", "true", "yes"}
+            defer_exec = polymarket_defer_exec_requested()
+            if defer_exec:
+                logging.warning("POLYMARKET_GLOBAL_DEFER_EXEC is ignored by the unified Polymarket SDK.")
+
+            builder_code = os.getenv("POLYMARKET_GLOBAL_BUILDER_CODE") or None
             logging.info(
                 f"Posting Polymarket market order | "
                 f"side={action} | amount={amount} | price={price} | size={volume}"
             )
-            response = await asyncio.to_thread(
-                self.poly_client.create_and_post_market_order,
-                order_args,
-                options=options, order_type=OrderType.FOK,
-                defer_exec=defer_exec,
+            response = await self.poly_client.place_market_order(
+                token_id=token_id,
+                side=action,
+                order_type="FOK",
+                builder_code=builder_code,
+                **order_kwargs,
             )
         except Exception as e:
             logging.info(f"Failed to place Poly order: {e}")
@@ -206,14 +220,25 @@ class ExecutionEngine:
                 "price": price,
                 "size": volume,
                 "status": "ERROR",
-                "defer_exec": os.getenv("POLY_DEFER_EXEC", "").lower() in {"1", "true", "yes"},
+                "defer_exec": polymarket_defer_exec_requested(),
                 "error": str(e),
             })
             return None
 
-        order_id = response.get("orderID")
-        success = response.get("success")
-        status_text = str(response.get("status", "")).lower()
+        order_id = (
+            poly_response_value(response, "order_id")
+            or poly_response_value(response, "orderID")
+        )
+        success = (
+            poly_response_value(response, "ok")
+            if poly_response_value(response, "ok") is not None
+            else poly_response_value(response, "success")
+        )
+        status_text = str(
+            poly_response_value(response, "status")
+            or poly_response_value(response, "code")
+            or ""
+        ).lower()
         if success and status_text == "matched":
             order_status = OrderStatus.FILLED
             self.position_manager.poly_balance += self.balance_delta(price, volume, side, Exchange.POLYMARKET)
@@ -238,7 +263,7 @@ class ExecutionEngine:
             "status": enum_name(order_status),
             "external_order_id": order_id,
             "api_status": status_text,
-            "defer_exec": os.getenv("POLY_DEFER_EXEC", "").lower() in {"1", "true", "yes"},
+            "defer_exec": polymarket_defer_exec_requested(),
         })
         return result
 

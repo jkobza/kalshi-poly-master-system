@@ -6,6 +6,8 @@ class Exchange(Enum):
     """
     KALSHI = 1
     POLYMARKET = 2
+    POLYMARKET_GLOBAL = 2
+    POLYMARKET_US = 3
 
 class PositionStatus(Enum):
     """

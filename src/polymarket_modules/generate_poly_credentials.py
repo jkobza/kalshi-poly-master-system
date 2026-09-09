@@ -1,5 +1,3 @@
-from py_clob_client_v2 import SignatureTypeV2
-from py_clob_client_v2.client import ClobClient
 from dotenv import load_dotenv
 import os
 from pathlib import Path
@@ -10,39 +8,53 @@ ENV_PATH = PROJECT_ROOT / 'secrets' / '.env'
 
 load_dotenv(ENV_PATH)
 
-def get_poly_signature_type():
+
+def _required_env(name):
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"{name} is required to create a Polymarket client.")
+    return value
+
+
+def _legacy_api_credentials():
     """
-    Read and validate the configured numeric Polymarket CLOB signature type.
+    Build unified SDK credentials from the previous CLOB environment variables when present.
     """
-    signature_type = int(os.getenv("POLY_SIGNATURE_TYPE", "1"))
-    if signature_type not in {0, 1, 2}:
+    api_key = os.getenv("POLYMARKET_GLOBAL_API_KEY")
+    api_secret = os.getenv("POLYMARKET_GLOBAL_API_SECRET")
+    api_passphrase = os.getenv("POLYMARKET_GLOBAL_API_PASSPHRASE")
+    values = [api_key, api_secret, api_passphrase]
+
+    if not any(values):
+        return None
+    if not all(values):
         raise ValueError(
-            f"POLY_SIGNATURE_TYPE must be 0, 1, or 2 for CLOB V2 order posting. Got {signature_type}."
+            "POLYMARKET_GLOBAL_API_KEY, POLYMARKET_GLOBAL_API_SECRET, and "
+            "POLYMARKET_GLOBAL_API_PASSPHRASE must be set together."
         )
-    return signature_type
 
+    from polymarket import ApiKeyCreds
 
-from py_clob_client_v2 import ClobClient, SignatureTypeV2, ApiCreds
-import os
-
-
-def get_poly_client():
-    """
-    Build a Polymarket CLOB V2 client from environment API credentials and wallet settings.
-    """
-    creds = ApiCreds(
-        api_key=os.getenv("POLY_API_KEY"),
-        api_secret=os.getenv("POLY_API_SECRET"),
-        api_passphrase=os.getenv("POLY_API_PASSPHRASE")
+    return ApiKeyCreds(
+        key=api_key,
+        secret=api_secret,
+        passphrase=api_passphrase,
     )
 
-    client = ClobClient(
-        host="https://clob.polymarket.com",
-        chain_id=137,
-        key=os.getenv("POLY_PRIVATE_KEY"),
-        creds=creds,
-        signature_type=SignatureTypeV2.POLY_1271,
-        funder=os.getenv("POLY_FUNDER_ADDRESS")
+
+async def get_poly_client():
+    """
+    Build a unified Polymarket secure client from environment wallet settings.
+    """
+    from polymarket import AsyncSecureClient
+
+    wallet = (
+        os.getenv("POLYMARKET_GLOBAL_WALLET_ADDRESS")
+        or os.getenv("POLYMARKET_GLOBAL_FUNDER_ADDRESS")
     )
 
-    return client
+    return await AsyncSecureClient.create(
+        private_key=_required_env("POLYMARKET_GLOBAL_PRIVATE_KEY"),
+        wallet=wallet,
+        credentials=_legacy_api_credentials(),
+    )

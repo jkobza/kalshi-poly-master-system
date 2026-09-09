@@ -11,12 +11,12 @@ import logging
 from pathlib import Path
 
 from src.execution_engine import ExecutionEngine
-from src.state_classes.market_holder import MarketHolder
+from state_classes.arb_holder import MarketHolder
 from src.state_classes.position_manager import PositionManager
 from src.kalshi_modules.generate_kalshi_credentials import get_kalshi_client
 from src.polymarket_modules.generate_poly_credentials import get_poly_client
-from src.kalshi_modules.kalshi_listeners import listen_kalshi_markets, get_kalshi_balance
-from src.polymarket_modules.polymarket_listeners import listen_polymarket_markets, get_polymarket_balance
+from src.listeners.kalshi.orderbook_listener import listen_kalshi_markets, get_kalshi_balance
+from src.listeners.polymarket.orderbook_listener import listen_polymarket_markets, get_polymarket_balance
 from src.strategy_engine import StrategyEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +52,7 @@ async def main():
         logging.info("Starting engine...")
 
         markets = MarketHolder()
-        poly_client = get_poly_client()
+        poly_client = await get_poly_client()
         kalshi_client = get_kalshi_client()
         orderbook_update_process_queue = asyncio.Queue()
         execution_queue = asyncio.Queue()

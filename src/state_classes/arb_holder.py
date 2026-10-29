@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-
+import csv
 import pandas as pd
+from datetime import datetime
 
-from src.state_classes.arb_group import ArbGroup
 from src.state_classes.arb_pair import ArbPair
 from src.state_classes.exchange_legs import KalshiLeg, Leg, PolymarketUsLeg
 from src.state_classes.orderbook import Orderbook
@@ -13,155 +13,189 @@ from src.util.enums import Exchange
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MATCHED_TABLE_PATH = PROJECT_ROOT / "data" / "matchedtable.csv"
-
+KALSHI_TABLE_PATH = PROJECT_ROOT /"data"/"kalshi_markets.csv"
+PMUS_TABLE_PATH = PROJECT_ROOT/"data"/"polymarket_us_markets.csv"
 
 class ArbHolder:
-    _instance = None
-    _initialized = False
-    arb_groups: dict = {}
-    arb_pairs: dict = {}
+    """Hold matched arb pairs for for the univer."""
 
-    def __new__(cls, *args, **kwargs):
-        """
-        Return the shared ArbHolder instance so all components see the same books and mappings.
-        """
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    # Add additonal markets here later
 
     def __init__(self):
-        """
-        Load matched markets once and initialize empty Kalshi/Polymarket orderbooks plus lookup maps.
-        """
-        if self._initialized:
-            return
-        self.arb_groups = {}
-        self.arb_pairs = {}
-        matched_df = pd.read_csv(MATCHED_TABLE_PATH)
-        for _, row in matched_df.iterrows():
-            self.process_row(row)
-        self._initialized = True
+        # Dict of Kalshi
+        self.legs_by_id = {}
+        self.books_by_market = {}
+        self.arb_pairs_by_pairid = {}
+        self.arb_pairs_by_leg = {}
+        self.legs_by_id = {}
 
-    """
-    group_id,pair_id,enabled,
-    exchange_a,ticker_a,outcome_a,
-    side_id_a,order_intent_a,
-    exchange_b,ticker_b,outcome_b,side_id_b,order_intent_b,
-    market_desc
-    """
 
-    def process_row(self, row: pd.Series) -> None:
-        group_id = row.get("group_id")
-        pair_id = str(row.get("pair_id", "") or "").strip()
-        description = str(row.get("market_desc", "") or "").strip()
 
-        leg_a = self.create_leg(
-            exchange=row.get("exchange_a"),
-            ticker=row.get("ticker_a"),
-            outcome=row.get("outcome_a"),
-            side=row.get("side_id_a"),
-            order_intent=row.get("order_intent_a"),
-            description=description,
-        )
-        leg_b = self.create_leg(
-            exchange=row.get("exchange_b"),
-            ticker=row.get("ticker_b"),
-            outcome=row.get("outcome_b"),
-            side=row.get("side_id_b"),
-            order_intent=row.get("order_intent_b"),
-            description=description,
-        )
-        legs = [leg for leg in (leg_a, leg_b) if leg is not None]
-        if len(legs) != 2 or not pair_id:
-            return
+    """id,market_ticker,outcome_side,est_start_date,est_end_date,expiration_time"""
+    def process_kalshi_markets_table(self):
 
-        pair = ArbPair(
-            pair_id=pair_id,
-            description=description,
-            legs=legs,
-            group_id=None if pd.isna(group_id) else str(group_id),
-        )
-        self.arb_pairs[pair_id] = pair
+    # Track all outcomes we have see for kalshi, so that duplicates are omitted
+        seen_outcomes = {
+    (leg.market_ticker, leg.outcome_side)
+    for leg in self.legs_by_id.values()
+    if leg.exchange == Exchange.KALSHI
+        }
 
-        if pair.group_id:
-            group = self.arb_groups.get(pair.group_id)
-            if group is None:
-                group = ArbGroup(group_id=pair.group_id, label=description)
-                self.arb_groups[pair.group_id] = group
-            group.arb_pairs.append(pair)
+        with KALSHI_TABLE_PATH.open(newline="", encoding="utf-8") as file:
+            for line_number, row in enumerate(csv.DictReader(file), start=2):
+                try:
 
-    def create_leg(
-        self,
-        exchange,
-        ticker,
-        outcome,
-        side=None,
-        order_intent=None,
-        description: str = "",
-    ) -> Leg | None:
-        side_s = self._clean_id(side)
-        intent_s = self._clean_id(order_intent)
-        ticker_s = self._clean_id(ticker)
-        if not ticker_s:
-            return None
-        outcome_s = self._clean_id(outcome) or ""
+                    k_id = row["k_id"].strip()
+                    market_ticker = row["market_ticker"].strip()
+                    outcome_side=row["outcome_side"].strip().lower()
+                    
+                    # Ensure k_id, market_ticker, outcome_side are unique and not missing
+                    if not k_id:
+                        raise ValueError("k_id is empty")
+                    if k_id in self.kalshi_markets:
+                        raise ValueError(f"Duplicate k_id: {k_id!r}")
+                    if not market_ticker:
+                        raise ValueError("market_ticker is empty")
+                    if outcome_side not in {"yes", "no"}:
+                        raise ValueError(f"Invalid outcome_side: {outcome_side!r}")
 
-        exchange_tag = self._normalize_exchange(exchange)
-        book = Orderbook()
+                    outcome_key = (market_ticker, outcome_side)
+                    if outcome_key in seen_outcomes:
+                        raise ValueError(f"Duplicate market/outcome: {outcome_key}")
 
-        if exchange_tag == "kalshi":
-            return KalshiLeg(
-                exchange=Exchange.KALSHI,
-                description=description or outcome_s,
-                orderbook=book,
-                est_start_date=None,
-                est_end_date=None,
-                expiration_time=None,
-                market_ticker=ticker_s,
-                outcome_key=outcome_s,
-            )
-        if exchange_tag == "poly_us":
-            return PolymarketUsLeg(
-                exchange=Exchange.POLYMARKET_US,
-                description=description or outcome_s,
-                orderbook=book,
-                est_start_date=None,
-                est_end_date=None,
-                expiration_time=None,
-                market_slug=ticker_s,
-                side_id=side_s,
-                outcome_key=outcome_s,
-                order_intent=intent_s,
-            )
+                    est_start_date = parse_datetime(row["est_start_date"])
+                    est_end_date = parse_datetime(row["est_end_date"])
+                    expiration_time = parse_datetime(row["expiration_time"])
+                    description = row["description"].strip()
+
+                    market_key = (Exchange.KALSHI, market_ticker)
+
+                    if market_key not in self.books_by_market:
+                        self.books_by_market[market_key] = Orderbook()
+
+                    book = self.books_by_market[market_key]
+
+                    leg = KalshiLeg(k_id,exchange=Exchange.KALSHI, description=description,orderbook = book,
+                                    est_start_date=est_start_date,est_end_date=est_end_date, 
+                                    expiration_time=expiration_time,market_ticker=market_ticker,
+                                    outcome_side=outcome_side
+                                    )
+
+                    self.legs_by_id[k_id] = leg
+                    seen_outcomes.add(outcome_key)
+
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{KALSHI_TABLE_PATH.name}, row {line_number}: {exc}"
+                    ) from exc
+
+    def process_pmus_markets_table(self):
+        # Track all outcomes we have see for kalshi, so that duplicates are omitted
+                seen_outcomes = {
+                    (leg.market_ticker, leg.outcome_side)
+                    for leg in self.legs_by_id.values()
+                    if leg.exchange == Exchange.POLYMARKET_US
+                        }
+        
+                with PMUS_TABLE_PATH.open(newline="", encoding="utf-8") as file:
+                    for line_number, row in enumerate(csv.DictReader(file), start=2):
+                        try:
+        
+                            p_id = row["p_id"].strip()
+                            market_ticker = row["market_ticker"].strip()
+                            outcome_side=row["outcome_side"].strip().lower()
+                            
+                            # Ensure k_id, market_ticker, outcome_side are unique and not missing
+                            if not p_id:
+                                raise ValueError("k_id is empty")
+                            if p_id in self.pmus_markets:
+                                raise ValueError(f"Duplicate k_id: {p_id!r}")
+                            if not market_ticker:
+                                raise ValueError("market_ticker is empty")
+                            if outcome_side not in {"yes", "no"}:
+                                raise ValueError(f"Invalid outcome_side: {outcome_side!r}")
+        
+                            outcome_key = (market_ticker, outcome_side)
+                            if outcome_key in seen_outcomes:
+                                raise ValueError(f"Duplicate market/outcome: {outcome_key}")
+        
+                            est_start_date = parse_datetime(row["est_start_date"])
+                            est_end_date = parse_datetime(row["est_end_date"])
+                            expiration_time = parse_datetime(row["expiration_time"])
+                            description = row["description"].strip()
+
+                            market_key = (Exchange.POLYMARKET_US, market_ticker)
+
+                            if market_key not in self.books_by_market:
+                                self.books_by_market[market_key] = Orderbook()
+
+                            book = self.books_by_market[market_key]
+
+                            leg = PolymarketUsLeg(p_id,exchange=Exchange.POLYMARKET_US, description=description,orderbook = book,
+                                            est_start_date=est_start_date,est_end_date=est_end_date, 
+                                            expiration_time=expiration_time,market_ticker=market_ticker,
+                                            outcome_side=outcome_side
+                                            )
+        
+                            self.legs_by_id[p_id] = leg
+                            seen_outcomes.add(outcome_key)
+        
+                        except ValueError as exc:
+                            raise ValueError(
+                                f"{PMUS_TABLE_PATH.name}, row {line_number}: {exc}"
+                            ) from exc
+
+    def process_matchedtable(self):
+        with MATCHED_TABLE_PATH.open(newline="", encoding="utf-8") as file:
+                for line_number, row in enumerate(csv.DictReader(file), start=2):
+                    try:
+                        '''pair_id,description,leg1_id,leg2_id'''
+                        pair_id = row["pair_id"]
+                        description = row["description"]
+                        leg1_id = row["leg1_id"]
+                        leg2_id = row["leg2_id"]
+
+                        if pair_id in self.arb_pairs_by_pairid:
+                            raise ValueError(f"Duplicate pairid {pair_id}")
+
+                        if leg1_id == leg2_id:
+                            raise ValueError(f"Duplicate Legs in Table")
+
+                        if not leg1_id in self.legs_by_id:
+                            raise ValueError(f"Leg not Found {leg1_id}")
+
+                        if not leg2_id in self.legs_by_id:
+                            raise ValueError(f"Leg not found {leg2_id}")
+
+                        leg1 = self.legs_by_id[leg1_id]
+                        leg2 = self.legs_by_id[leg2_id]
+
+                        # Legs should have same start and end time roughly. 
+
+                        pair = ArbPair(pair_id=pair_id, description=description,
+                                       legs=[leg1, leg2])
+                        self.arb_pairs_by_pairid[pair_id] = pair
+                        for leg in pair.legs:
+                            self.arb_pairs_by_leg.setdefault(leg.leg_id, set()).add(pair_id)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"{KALSHI_TABLE_PATH.name}, row {line_number}: {exc}"
+                            ) from exc
+
+                                
+                                     
+
+    def load(self):
+        self.process_kalshi_markets_table()
+        self.process_pmus_markets_table()
+        self.process_matchedtable()
+
+def parse_datetime(value: str) -> datetime | None:
+    value = value.strip()
+    if not value:
         return None
 
-    @staticmethod
-    def _clean_id(value) -> str | None:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return None
-        try:
-            if pd.isna(value):
-                return None
-        except (TypeError, ValueError):
-            pass
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
-        if isinstance(value, int):
-            return str(value)
-        text = str(value).strip()
-        if not text or text.lower() == "nan":
-            return None
-        if text.endswith(".0") and text[:-2].isdigit():
-            return text[:-2]
-        return text
-
-    @staticmethod
-    def _normalize_exchange(value) -> str:
-        tag = str(value or "").strip().lower()
-        aliases = {
-            "kalshi": "kalshi",
-            "poly_us": "poly_us",
-            "polymarket_us": "poly_us",
-            "polymarket": "poly_us",
-        }
-        return aliases.get(tag, tag)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"Timestamp must include a timezone: {value!r}")
+    return parsed

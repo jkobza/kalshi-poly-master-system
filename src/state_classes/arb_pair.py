@@ -20,4 +20,3 @@ class ArbPair:
     start_time: datetime | None = None
     end_time: datetime | None = None
     expiration_time: datetime | None = None
-    group_id: str | None = None

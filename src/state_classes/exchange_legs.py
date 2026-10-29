@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -9,55 +8,45 @@ from src.util.enums import Exchange
 
 
 @dataclass
-class Leg(ABC):
+class Leg:
     """
-    One tradeable outcome on a single venue.
-
-    Pair-level metadata (pair_id, shared desc/times) lives on ArbPair, not here.
+    One tradeable outcome on a single venue, identified by its CSV leg ID.
     """
 
+    leg_id: str
     exchange: Exchange
     description: str
     orderbook: Orderbook
     est_start_date: datetime | None
     est_end_date: datetime | None
     expiration_time: datetime | None
-
-    @property
-    @abstractmethod
-    def asset_id(self) -> str:
-        """Venue-native id used for WS subscribe / orderbook map / orders."""
-
+    
 
 @dataclass
 class KalshiLeg(Leg):
     """Kalshi markets are addressed by market ticker."""
 
     market_ticker: str
-    outcome_key: str
+    outcome_side: str
 
     def __post_init__(self) -> None:
         self.exchange = Exchange.KALSHI
 
     @property
-    def asset_id(self) -> str:
-        return self.market_ticker
+    def leg_info(self) -> tuple[str,str]:
+        return self.market_ticker, self.outcome_side
 
 
 @dataclass
 class PolymarketUsLeg(Leg):
-    """Polymarket US markets need a market slug plus side (and optional order intent)."""
+    """Polymarket US markets need a market slug plus outcome side."""
 
-    market_slug: str
-    side_id: str | None
-    outcome_key: str
-    order_intent: str | None
+    market_ticker: str
+    outcome_side: str
 
     def __post_init__(self) -> None:
         self.exchange = Exchange.POLYMARKET_US
 
     @property
-    def asset_id(self) -> str:
-        if self.side_id:
-            return self.side_id
-        return f"{self.market_slug}:{self.outcome_key.lower()}"
+    def leg_info(self) -> str:
+        return self.market_slug, self.outcome_side

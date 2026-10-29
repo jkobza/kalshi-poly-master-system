@@ -3,10 +3,7 @@ aiofiles==25.1.0
 cryptography==46.0.5
 kalshi_python_async==3.11.0
 pandas==3.0.1
-py_clob_client_v2==1.0.1rc1
+polymarket-client==0.1.0b21
 python-dotenv==1.2.2
 requests==2.32.5
 websockets==16.0
-
-# Used by demos/poly_tests.py, which still imports the legacy CLOB client.
-py_clob_client==0.34.6

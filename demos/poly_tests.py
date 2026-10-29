@@ -1,42 +1,51 @@
-import requests
 import json
-from py_clob_client.client import ClobClient
+import sys
+
+import requests
 
 
-def get_polymarket_market():
+GAMMA_MARKET_BY_SLUG_URL = "https://gamma-api.polymarket.com/markets/slug/{slug}"
+CLOB_MARKET_BY_CONDITION_URL = "https://clob.polymarket.com/clob-markets/{condition_id}"
+
+
+def parse_json_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return json.loads(value)
+    return []
+
+
+def get_polymarket_market(slug="mlb-min-kc-2026-08-05"):
     """
-    Fetch a sample Polymarket Gamma market, print token IDs, and inspect one CLOB orderbook.
+    Fetch a Polymarket market by slug, print CLOB token IDs, and inspect the taker delay flag.
     """
-    # 1. Add headers to bypass the block
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+    market_response = requests.get(GAMMA_MARKET_BY_SLUG_URL.format(slug=slug), timeout=10)
+    market_response.raise_for_status()
+    market = market_response.json()
 
-    # 2. Add a timeout so it fails immediately if blocked again
-    response = requests.get(
-        "https://gamma-api.polymarket.com/markets/slug/mlb-nyy-bos-2026-06-27",
-        headers=headers,
-        timeout=10
-    )
-    market = response.json()
-    print(market)
-    print(market["question"])
+    question = market["question"]
+    condition_id = market["conditionId"]
+    outcomes = parse_json_list(market.get("outcomes"))
+    token_ids = parse_json_list(market.get("clobTokenIds"))
 
-    clob_tokens = json.loads(market["clobTokenIds"])
-    market_outcomes = json.loads(market["outcomes"])
-    yes = clob_tokens[0]
+    clob_response = requests.get(CLOB_MARKET_BY_CONDITION_URL.format(condition_id=condition_id), timeout=10)
+    clob_response.raise_for_status()
+    clob_market = clob_response.json()
 
-    # 3. Use the parsed list, not the raw JSON string
-    no = clob_tokens[0]
-    print(f"{market_outcomes[0]} token: {clob_tokens[0]}")
-    print(f"{market_outcomes[1]} token: {clob_tokens[1]}")
+    itode = clob_market.get("itode")
+    taker_delay_ms = 250 if itode is True else 0
 
-    client = ClobClient("https://clob.polymarket.com", chain_id=137)
-    book = client.get_order_book(no)
-    print("Best bid:", book.bids[-1])
-    print("Best ask:", book.asks[-1])
-    print("Tick size:", book.tick_size)
+    print(question)
+    print(f"slug: {slug}")
+    print(f"condition_id: {condition_id}")
+    for outcome, token_id in zip(outcomes, token_ids):
+        print(f"{outcome} token: {token_id}")
+    print(f"itode: {itode}")
+    print(f"taker_delay_ms: {taker_delay_ms}")
+    print(f"delay_debug: fd.to={clob_market.get('fd', {}).get('to')} secondsDelay={market.get('secondsDelay')}")
 
 
 if __name__ == '__main__':
-    get_polymarket_market()
+    slug = sys.argv[1] if len(sys.argv) > 1 else "mlb-min-kc-2026-08-05"
+    get_polymarket_market(slug)

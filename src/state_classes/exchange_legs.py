@@ -48,5 +48,5 @@ class PolymarketUsLeg(Leg):
         self.exchange = Exchange.POLYMARKET_US
 
     @property
-    def leg_info(self) -> str:
-        return self.market_slug, self.outcome_side
+    def leg_info(self) -> tuple[str, str]:
+        return self.market_ticker, self.outcome_side

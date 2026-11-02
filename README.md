@@ -1,5 +1,5 @@
 # Kalshi/Polymarket Arbitrage Bot
-
+# This README is NOT up to date with current syste
 ## Overview
 
 This repo contains an experimental async trading bot for matched Kalshi and Polymarket event markets. It reads paired markets from `data/matchedtable.csv`, subscribes to both exchanges' orderbook WebSockets, keeps normalized in-memory books, and looks for buy-both-yes arbitrage where the Kalshi ask plus the Polymarket ask is less than 1 after estimated fees.

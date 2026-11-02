@@ -27,7 +27,7 @@ class ArbHolder:
         self.books_by_market = {}
         self.arb_pairs_by_pairid = {}
         self.arb_pairs_by_leg = {}
-        self.legs_by_id = {}
+        self.leg_ids_by_market = {}
 
 
 
@@ -52,7 +52,7 @@ class ArbHolder:
                     # Ensure k_id, market_ticker, outcome_side are unique and not missing
                     if not k_id:
                         raise ValueError("k_id is empty")
-                    if k_id in self.kalshi_markets:
+                    if k_id in self.legs_by_id:
                         raise ValueError(f"Duplicate k_id: {k_id!r}")
                     if not market_ticker:
                         raise ValueError("market_ticker is empty")
@@ -82,6 +82,7 @@ class ArbHolder:
                                     )
 
                     self.legs_by_id[k_id] = leg
+                    self.leg_ids_by_market.setdefault(market_key, set()).add(leg.leg_id)
                     seen_outcomes.add(outcome_key)
 
                 except ValueError as exc:
@@ -107,9 +108,9 @@ class ArbHolder:
                             
                             # Ensure k_id, market_ticker, outcome_side are unique and not missing
                             if not p_id:
-                                raise ValueError("k_id is empty")
-                            if p_id in self.pmus_markets:
-                                raise ValueError(f"Duplicate k_id: {p_id!r}")
+                                raise ValueError("p_id is empty")
+                            if p_id in self.legs_by_id:
+                                raise ValueError(f"Duplicate p_id: {p_id!r}")
                             if not market_ticker:
                                 raise ValueError("market_ticker is empty")
                             if outcome_side not in {"yes", "no"}:
@@ -138,6 +139,7 @@ class ArbHolder:
                                             )
         
                             self.legs_by_id[p_id] = leg
+                            self.leg_ids_by_market.setdefault(market_key, set()).add(leg.leg_id)
                             seen_outcomes.add(outcome_key)
         
                         except ValueError as exc:
@@ -150,11 +152,13 @@ class ArbHolder:
                 for line_number, row in enumerate(csv.DictReader(file), start=2):
                     try:
                         '''pair_id,description,leg1_id,leg2_id'''
-                        pair_id = row["pair_id"]
+                        pair_id = row["pair_id"].strip()
                         description = row["description"]
-                        leg1_id = row["leg1_id"]
-                        leg2_id = row["leg2_id"]
+                        leg1_id = row["leg1_id"].strip()
+                        leg2_id = row["leg2_id"].strip()
 
+                        if not pair_id:
+                            raise ValueError("pair_id is empty")
                         if pair_id in self.arb_pairs_by_pairid:
                             raise ValueError(f"Duplicate pairid {pair_id}")
 
@@ -179,7 +183,7 @@ class ArbHolder:
                             self.arb_pairs_by_leg.setdefault(leg.leg_id, set()).add(pair_id)
                     except ValueError as exc:
                         raise ValueError(
-                            f"{KALSHI_TABLE_PATH.name}, row {line_number}: {exc}"
+                            f"{MATCHED_TABLE_PATH.name}, row {line_number}: {exc}"
                             ) from exc
 
                                 

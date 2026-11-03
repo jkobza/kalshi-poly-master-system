@@ -151,28 +151,28 @@ class ArbHolder:
         with MATCHED_TABLE_PATH.open(newline="", encoding="utf-8") as file:
                 for line_number, row in enumerate(csv.DictReader(file), start=2):
                     try:
-                        '''pair_id,description,leg1_id,leg2_id'''
+                        '''pair_id,description,side1_id,side2_id'''
                         pair_id = row["pair_id"].strip()
                         description = row["description"]
-                        leg1_id = row["leg1_id"].strip()
-                        leg2_id = row["leg2_id"].strip()
+                        side1_id = row["leg1_id"].strip()
+                        side2_id = row["leg2_id"].strip()
 
                         if not pair_id:
                             raise ValueError("pair_id is empty")
                         if pair_id in self.arb_pairs_by_pairid:
                             raise ValueError(f"Duplicate pairid {pair_id}")
 
-                        if leg1_id == leg2_id:
+                        if side1_id == side2_id:
                             raise ValueError(f"Duplicate Legs in Table")
 
-                        if not leg1_id in self.legs_by_id:
-                            raise ValueError(f"Leg not Found {leg1_id}")
+                        if not side1_id in self.legs_by_id:
+                            raise ValueError(f"Leg not Found {side2_id}")
 
-                        if not leg2_id in self.legs_by_id:
-                            raise ValueError(f"Leg not found {leg2_id}")
+                        if not side2_id in self.legs_by_id:
+                            raise ValueError(f"Leg not found {side2_id}")
 
-                        leg1 = self.legs_by_id[leg1_id]
-                        leg2 = self.legs_by_id[leg2_id]
+                        leg1 = self.legs_by_id[side1_id]
+                        leg2 = self.legs_by_id[side2_id]
 
                         # Legs should have same start and end time roughly. 
 
